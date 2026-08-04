@@ -302,40 +302,38 @@ export function ProfileForm({
             : "You give employers, titles, and dates. The model writes JD-tailored bullets for each role and cannot invent a company or a date that is not here. Leave title blank only if you want the model to fill the role line."}
         </p>
 
-        {profile.country !== "Colombia" && (
-          <div className="mt-4">
-            <Field
-              label="Bullets per company"
-              hint="Newest role first. Companies beyond the 3rd use the third value."
-            >
-              <div className="grid grid-cols-3 gap-2 sm:max-w-md">
-                {(
-                  [
-                    { index: 0 as const, label: "1st" },
-                    { index: 1 as const, label: "2nd" },
-                    { index: 2 as const, label: "3rd+" },
-                  ] as const
-                ).map(({ index, label }) => (
-                  <label key={label} className="block">
-                    <span className="mb-1 block text-[11px] text-fg-faint">{label}</span>
-                    <input
-                      type="number"
-                      min={1}
-                      max={20}
-                      className="field"
-                      value={profile.bulletsPerCompany[index]}
-                      onChange={(e) => {
-                        const next = [...profile.bulletsPerCompany] as Profile["bulletsPerCompany"];
-                        next[index] = Math.min(20, Math.max(1, Number(e.target.value) || 1));
-                        set("bulletsPerCompany", next);
-                      }}
-                    />
-                  </label>
-                ))}
-              </div>
-            </Field>
-          </div>
-        )}
+        <div className="mt-4">
+          <Field
+            label="Bullets per company"
+            hint="Newest role first. Companies beyond the 3rd use the third value."
+          >
+            <div className="grid grid-cols-3 gap-2 sm:max-w-md">
+              {(
+                [
+                  { index: 0 as const, label: "1st" },
+                  { index: 1 as const, label: "2nd" },
+                  { index: 2 as const, label: "3rd+" },
+                ] as const
+              ).map(({ index, label }) => (
+                <label key={label} className="block">
+                  <span className="mb-1 block text-[11px] text-fg-faint">{label}</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={20}
+                    className="field"
+                    value={profile.bulletsPerCompany[index]}
+                    onChange={(e) => {
+                      const next = [...profile.bulletsPerCompany] as Profile["bulletsPerCompany"];
+                      next[index] = Math.min(20, Math.max(1, Number(e.target.value) || 1));
+                      set("bulletsPerCompany", next);
+                    }}
+                  />
+                </label>
+              ))}
+            </div>
+          </Field>
+        </div>
 
         <div className="mt-4 flex flex-col gap-4">
           {profile.experience.map((entry, index) => (

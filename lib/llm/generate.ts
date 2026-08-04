@@ -16,12 +16,14 @@ Absolute rules (never overridden):
 When a "CANDIDATE RESUME PROMPT" is provided, follow it for tone, emphasis, what to stress or avoid, bullet length and density, uniqueness, breadth vs the JD, skill/section preferences, language, and output structure. Only absolute rules 1–5 stay above it. When no candidate resume prompt is provided, still fill the JSON schema fields from the profile and job — do not invent a house style beyond the absolute rules.`;
 
 /**
- * Colombia: the profile resume prompt is the only instruction set.
- * Profile + job JSON are data inputs, not competing style/ATS rules.
+ * Colombia: the profile resume prompt is the only style/structure instruction set.
+ * Profile + job JSON are data inputs. Bullet counts are a hard structural constraint.
  */
 const COLOMBIA_RESUME_SYSTEM = `You write a tailored resume as JSON.
 
-The RESUME PROMPT is your complete and only set of instructions: how to write, what to emphasize, structure, tone, language, bullet style, skills layout, and how to use the candidate profile and target job. Follow it fully. Do not apply any other house style, ATS rules, market conventions, or default resume-writing policies.
+The RESUME PROMPT is your complete and only set of writing instructions: how to write, what to emphasize, structure, tone, language, bullet style, skills layout, and how to use the candidate profile and target job. Follow it fully. Do not apply any other house style, ATS rules, market conventions, or default resume-writing policies.
+
+Hard constraint: when BULLET COUNTS are provided, write exactly that many bullets for each company (newest first; roles beyond the 3rd use the third value). This overrides any conflicting bullet-count guidance in the RESUME PROMPT.
 
 Use the candidate profile and target job only as source data the RESUME PROMPT tells you how to use. Map every experience entry to the exact experienceId from the profile and keep the profile's employer order.`;
 
@@ -101,7 +103,8 @@ async function generateColombiaResumeDraft(
     signal,
     system: COLOMBIA_RESUME_SYSTEM,
     user: [
-      `\n--- RESUME PROMPT (sole instructions — follow completely) ---\n${prompt}\n--- END RESUME PROMPT ---`,
+      `\n--- RESUME PROMPT (sole writing instructions — follow completely) ---\n${prompt}\n--- END RESUME PROMPT ---`,
+      `BULLET COUNTS by company (newest first, hard constraint): 1st company = ${profile.bulletsPerCompany[0]} bullets, 2nd = ${profile.bulletsPerCompany[1]} bullets, 3rd and older = ${profile.bulletsPerCompany[2]} bullets each.`,
       correction ? `\n--- CORRECTION (still obey the RESUME PROMPT; fix only what is listed) ---\n${correction}` : "",
       `\n--- CANDIDATE PROFILE (source data) ---\n${JSON.stringify(profileForPrompt(profile), null, 2)}`,
       `\n--- TARGET JOB (source data) ---\n${JSON.stringify(job, null, 2)}`,
