@@ -29,7 +29,7 @@ export const TEMPLATES: { id: TemplateId; name: string; description: string }[] 
   {
     id: "midnight-navy",
     name: "Midnight Navy",
-    description: "Deep navy masthead, accent company names, and clear role hierarchy. Corporate and understated.",
+    description: "Navy accent rules, Stack-style Company|Location then Role|Period place, open section spacing.",
   },
   {
     id: "classic-serif",
@@ -54,7 +54,7 @@ export const TEMPLATES: { id: TemplateId; name: string; description: string }[] 
   {
     id: "cobalt-rail",
     name: "Cobalt Rail",
-    description: "Deep cobalt masthead, career rail beside experience only, compact senior type. Cool and scannable.",
+    description: "Career rail beside experience only, cobalt accents, compact senior type. No header band.",
   },
   {
     id: "boxed-cards",

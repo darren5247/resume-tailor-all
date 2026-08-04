@@ -1,7 +1,7 @@
 import type { TemplateId } from "../settings-schema";
 
 /**
- * Visual contract shared by the DOCX renderer and the HTML preview.
+ * Visual contract shared by the DOCX renderer, PDF renderer, and HTML preview.
  * Layout variants stay single-column: ATS parsers still see normal paragraphs.
  */
 export type TemplateLayout = "standard" | "band" | "timeline" | "cards";
@@ -60,27 +60,28 @@ export const TEMPLATE_STYLES: Record<TemplateId, TemplateStyle> = {
   "midnight-navy": {
     ...BASE,
     id: "midnight-navy",
-    layout: "band",
+    layout: "standard",
     bodyFont: "Calibri",
     headingFont: "Calibri",
     accent: "1E3A5F",
-    /** Deeper band than the section accent so the header reads as a solid masthead. */
-    surface: "132A47",
-    nameColor: "FFFFFF",
+    surface: "FFFFFF",
+    nameColor: "15202B",
     bodyColor: "15202B",
     mutedColor: "5A6A7A",
-    nameSizePt: 19.5,
-    headlineSizePt: 9.75,
-    headingSizePt: 9,
-    bodySizePt: 9.25,
-    centerHeader: false,
+    /** Balanced for Letter — 28pt matched A4 Stack but reads oversized here. */
+    nameSizePt: 20,
+    headlineSizePt: 10,
+    headingSizePt: 10.5,
+    bodySizePt: 10,
+    centerHeader: true,
     headingRule: true,
     headingRuleFullWidth: true,
-    headerRule: false,
-    /** Compact section gaps — long senior resumes should avoid orphan page-2 tails. */
-    sectionSpaceBefore: 130,
-    /** ~single line (240 = 1.0×) keeps bullets dense without colliding. */
-    lineSpacing: 230,
+    /** Thin navy rule under contact — replaces the old filled masthead. */
+    headerRule: true,
+    /** ~26pt between blocks — matches Stack reference section gaps. */
+    sectionSpaceBefore: 520,
+    /** ~1.3 leading (13pt on 10pt body). */
+    lineSpacing: 312,
   },
   "classic-serif": {
     ...BASE,
@@ -155,9 +156,8 @@ export const TEMPLATE_STYLES: Record<TemplateId, TemplateStyle> = {
     headingFont: "Calibri",
     /** Section rules + company names — deep cobalt, not neon. */
     accent: "1E40AF",
-    /** Masthead fill — slightly deeper than accent so the band reads as a solid slab. */
-    surface: "172554",
-    nameColor: "FFFFFF",
+    surface: "FFFFFF",
+    nameColor: "0F172A",
     bodyColor: "0F172A",
     mutedColor: "64748B",
     nameSizePt: 20,
@@ -168,7 +168,8 @@ export const TEMPLATE_STYLES: Record<TemplateId, TemplateStyle> = {
     centerHeader: false,
     headingRule: true,
     headingRuleFullWidth: false,
-    headerRule: false,
+    /** Thin cobalt rule under contact — replaces the old filled masthead. */
+    headerRule: true,
     /** A touch more air than Midnight — rail needs room to breathe between roles. */
     sectionSpaceBefore: 155,
     lineSpacing: 236,
@@ -219,17 +220,28 @@ export function usesClearHierarchy(style: TemplateStyle): boolean {
   return style.id === "executive-slate" || style.id === "midnight-navy" || style.id === "cobalt-rail";
 }
 
-export function isMidnightNavy(style: TemplateStyle): boolean {
+/**
+ * Stack reference place: Company | Location, then Role | Period.
+ * (Midnight Navy follows Juan.pdf; other hierarchy templates keep Company | Period.)
+ */
+export function usesStackedRolePlace(style: TemplateStyle): boolean {
   return style.id === "midnight-navy";
+}
+
+/** Page insets in inches — Midnight matches ~40pt Stack margins. */
+export function pageMarginsInches(style: TemplateStyle): { x: number; top: number; bottom: number } {
+  if (style.id === "midnight-navy") return { x: 0.55, top: 0.6, bottom: 0.72 };
+  if (usesCompactRhythm(style)) return { x: 0.5, top: 0.48, bottom: 0.45 };
+  return { x: 0.65, top: 0.7, bottom: 0.65 };
 }
 
 export function isCobaltRail(style: TemplateStyle): boolean {
   return style.id === "cobalt-rail";
 }
 
-/** Dense type scale + tighter vertical rhythm (Midnight Navy, Cobalt Rail). */
+/** Dense type scale + tighter vertical rhythm (Cobalt Rail). */
 export function usesCompactRhythm(style: TemplateStyle): boolean {
-  return style.id === "midnight-navy" || style.id === "cobalt-rail";
+  return style.id === "cobalt-rail";
 }
 
 /**
@@ -247,23 +259,19 @@ export function railColor(style: TemplateStyle): string {
   return style.accent;
 }
 
-/** Masthead underline for navy/cobalt band templates. */
-export function bandEdgeColor(style: TemplateStyle): string | undefined {
-  if (isMidnightNavy(style)) return "3D5A80";
-  if (isCobaltRail(style)) return "60A5FA";
+/** Masthead underline for band templates with a contrasting edge. */
+export function bandEdgeColor(_style: TemplateStyle): string | undefined {
   return undefined;
 }
 
 /** On-band secondary text (headline). */
 export function bandHeadlineColor(style: TemplateStyle): string {
-  if (isCobaltRail(style)) return "BFDBFE";
   if (usesCompactRhythm(style)) return "CBD5E1";
   return "E2E8F0";
 }
 
 /** On-band tertiary text (contact). */
 export function bandContactColor(style: TemplateStyle): string {
-  if (isCobaltRail(style)) return "93C5FD";
   if (usesCompactRhythm(style)) return "94A3B8";
   return "CBD5E1";
 }

@@ -16,13 +16,14 @@ import type { TemplateId } from "../settings-schema";
 import {
   bandContactColor,
   bandEdgeColor,
-  bandHeadlineColor,
   formatContactLines,
   isCobaltRail,
+  pageMarginsInches,
   railColor,
   templateStyle,
   usesClearHierarchy,
   usesCompactRhythm,
+  usesStackedRolePlace,
   type TemplateStyle,
 } from "./templates";
 
@@ -46,6 +47,7 @@ export async function renderResumeDocx(resume: ResumeDoc, templateId: TemplateId
     for (const group of skills) {
       children.push(
         new Paragraph({
+          alignment: AlignmentType.LEFT,
           spacing: { after: usesCompactRhythm(style) ? 20 : 40, line: style.lineSpacing },
           children: [
             new TextRun({
@@ -82,6 +84,7 @@ export async function renderResumeDocx(resume: ResumeDoc, templateId: TemplateId
     for (const project of projects) {
       children.push(
         new Paragraph({
+          alignment: AlignmentType.LEFT,
           spacing: { before: 80, after: 20, line: style.lineSpacing },
           children: [
             new TextRun({
@@ -110,8 +113,8 @@ export async function renderResumeDocx(resume: ResumeDoc, templateId: TemplateId
   if (education.length > 0) {
     children.push(sectionHeading("EDUCATION", style));
     for (const entry of education) {
-      children.push(roleHeading(entry.degree || entry.school, entry.period, style, false));
-      const detail = [entry.school && entry.degree ? entry.school : "", entry.location, entry.gpa ? `GPA ${entry.gpa}` : ""]
+      children.push(roleHeading(entry.school || entry.degree, entry.period, style, false));
+      const detail = [entry.degree && entry.school ? entry.degree : "", entry.location, entry.gpa ? `GPA ${entry.gpa}` : ""]
         .filter(Boolean)
         .join(" · ");
       if (detail) children.push(roleSubheading(detail, "", style, false));
@@ -134,12 +137,12 @@ export async function renderResumeDocx(resume: ResumeDoc, templateId: TemplateId
     );
   }
 
-  const compact = usesCompactRhythm(style);
+  const margins = pageMarginsInches(style);
   // Timeline rail is an experience gutter, not a page margin — keep full measure
   // for masthead / summary / skills so long headlines wrap cleanly.
-  const leftMargin = convertInchesToTwip(compact ? 0.5 : 0.65);
-  const verticalMargin = convertInchesToTwip(compact ? 0.48 : 0.7);
-  const bottomMargin = convertInchesToTwip(compact ? 0.45 : 0.65);
+  const leftMargin = convertInchesToTwip(margins.x);
+  const verticalMargin = convertInchesToTwip(margins.top);
+  const bottomMargin = convertInchesToTwip(margins.bottom);
 
   const document = new Document({
     creator: resume.name || "Resume Tailor",
@@ -183,10 +186,16 @@ function roleBlock(
   const rail = style.layout === "timeline";
   const decorated = card || rail;
   const hasTech = role.technologies.length > 0;
-  const paragraphs: Paragraph[] = [
-    roleHeading(role.company, role.period, style, decorated, true),
-    roleSubheading(role.role, role.location, style, decorated),
-  ];
+  const stacked = usesStackedRolePlace(style);
+  const paragraphs: Paragraph[] = stacked
+    ? [
+        roleHeading(role.company || role.role, role.location, style, decorated, true),
+        roleMetaRow(role.role && role.company ? role.role : role.role, role.period, style, decorated),
+      ]
+    : [
+        roleHeading(role.company, role.period, style, decorated, true),
+        roleSubheading(role.role, role.location, style, decorated),
+      ];
 
   if (role.overview) {
     paragraphs.push(roleOverview(role.overview, style, decorated));
@@ -221,7 +230,6 @@ function header(resume: ResumeDoc, style: TemplateStyle): Paragraph[] {
   const cobalt = isCobaltRail(style);
   const compact = usesCompactRhythm(style);
   const nameColor = band ? style.nameColor : style.nameColor;
-  const headlineOnBand = band ? bandHeadlineColor(style) : style.mutedColor;
   const contactOnBand = band ? bandContactColor(style) : style.mutedColor;
   const contactLines = formatContactLines(resume.contactLine);
   const bandEdge = bandEdgeColor(style);
@@ -246,27 +254,6 @@ function header(resume: ResumeDoc, style: TemplateStyle): Paragraph[] {
       ],
     }),
   ];
-
-  if (resume.headline) {
-    paragraphs.push(
-      new Paragraph({
-        alignment,
-        spacing: { after: compact ? 40 : 40 },
-        shading: band ? { type: ShadingType.CLEAR, fill: style.surface } : undefined,
-        border: cobalt && band
-          ? { left: { style: BorderStyle.SINGLE, size: 28, color: railColor(style), space: 10 } }
-          : undefined,
-        children: [
-          new TextRun({
-            text: resume.headline,
-            font: style.bodyFont,
-            size: pt(style.headlineSizePt),
-            color: headlineOnBand,
-          }),
-        ],
-      }),
-    );
-  }
 
   if (contactLines.length === 0) {
     paragraphs.push(
@@ -336,6 +323,7 @@ function sectionHeading(text: string, style: TemplateStyle): Paragraph {
   const compact = usesCompactRhythm(style);
   const cobalt = isCobaltRail(style);
   return new Paragraph({
+    alignment: AlignmentType.LEFT,
     spacing: { before: style.sectionSpaceBefore, after: bar ? 100 : compact ? (cobalt ? 60 : 50) : 80 },
     shading: bar ? { type: ShadingType.CLEAR, fill: style.surface } : undefined,
     border: bar
@@ -374,6 +362,7 @@ function roleHeading(
   // Timeline Rail keeps a compact dot for chronology when there is no masthead band.
   const label = timeline && !cobalt ? `●  ${left}` : left;
   return new Paragraph({
+    alignment: AlignmentType.LEFT,
     spacing: {
       before: decorated && openCard ? (compact ? (cobalt ? 120 : 100) : 160) : compact ? 70 : hierarchy ? 140 : 120,
       after: compact ? 4 : hierarchy ? 20 : 0,
@@ -387,7 +376,7 @@ function roleHeading(
         text: label,
         bold: true,
         font: style.bodyFont,
-        size: pt(style.bodySizePt + (compact ? 0.5 : hierarchy ? 0.75 : 0.5)),
+        size: pt(style.bodySizePt + (compact ? 1.75 : usesStackedRolePlace(style) || hierarchy ? 2.25 : 2)),
         color: timeline || hierarchy ? style.accent : style.bodyColor,
       }),
       ...(right
@@ -454,10 +443,48 @@ function roleSubheading(role: string, location: string, style: TemplateStyle, de
   const timeline = style.layout === "timeline" && decorated;
   const cobalt = isCobaltRail(style);
   return new Paragraph({
+    alignment: AlignmentType.LEFT,
     spacing: { after: compact ? 16 : 40, line: style.lineSpacing },
     border: decorated ? experienceBorder(style, "mid") : undefined,
     indent: timeline ? { left: cobalt ? 160 : 120 } : undefined,
     children,
+  });
+}
+
+/** Stack place second line: Role (left) | Period (right). */
+function roleMetaRow(role: string, period: string, style: TemplateStyle, decorated: boolean): Paragraph {
+  const compact = usesCompactRhythm(style);
+  const stacked = usesStackedRolePlace(style);
+  const timeline = style.layout === "timeline" && decorated;
+  const cobalt = isCobaltRail(style);
+  return new Paragraph({
+    alignment: AlignmentType.LEFT,
+    spacing: { after: compact ? 16 : stacked ? 60 : 40, line: style.lineSpacing },
+    tabStops: [{ type: TabStopType.RIGHT, position: TabStopPosition.MAX }],
+    border: decorated ? experienceBorder(style, "mid") : undefined,
+    indent: timeline ? { left: cobalt ? 160 : 120 } : undefined,
+    children: [
+      ...(role
+        ? [
+            new TextRun({
+              text: role,
+              font: style.bodyFont,
+              size: pt(style.bodySizePt),
+              color: style.bodyColor,
+            }),
+          ]
+        : []),
+      ...(period
+        ? [
+            new TextRun({
+              text: `\t${period}`,
+              font: style.bodyFont,
+              size: pt(style.bodySizePt - 0.5),
+              color: style.mutedColor,
+            }),
+          ]
+        : []),
+    ],
   });
 }
 
@@ -466,6 +493,7 @@ function roleOverview(text: string, style: TemplateStyle, decorated: boolean): P
   const timeline = style.layout === "timeline" && decorated;
   const cobalt = isCobaltRail(style);
   return new Paragraph({
+    alignment: AlignmentType.LEFT,
     spacing: { after: compact ? 28 : 60, line: style.lineSpacing },
     border: decorated ? experienceBorder(style, "mid") : undefined,
     indent: timeline ? { left: cobalt ? 160 : 120 } : undefined,
@@ -475,7 +503,7 @@ function roleOverview(text: string, style: TemplateStyle, decorated: boolean): P
         italics: true,
         font: style.bodyFont,
         size: pt(compact ? style.bodySizePt - 0.25 : style.bodySizePt),
-        color: style.bodyColor,
+        color: style.mutedColor,
       }),
     ],
   });
@@ -491,6 +519,7 @@ function technologiesLine(
   const cobalt = isCobaltRail(style);
   const timeline = style.layout === "timeline" && decorated;
   return new Paragraph({
+    alignment: AlignmentType.LEFT,
     spacing: { before: compact ? 4 : 20, after: closeCard ? 120 : compact ? 28 : 60, line: style.lineSpacing },
     border: decorated ? experienceBorder(style, closeCard ? "bottom" : "mid") : undefined,
     indent: timeline ? { left: cobalt ? 160 : 120 } : undefined,
@@ -519,6 +548,7 @@ function bulletLine(text: string, style: TemplateStyle, decorated: boolean, clos
   const timeline = style.layout === "timeline" && decorated;
   const cobalt = isCobaltRail(style);
   return new Paragraph({
+    alignment: AlignmentType.LEFT,
     bullet: { level: 0 },
     spacing: { after: closeCard ? 120 : compact ? 16 : 40, line: style.lineSpacing },
     border: decorated ? experienceBorder(style, closeCard ? "bottom" : "mid") : undefined,
@@ -541,6 +571,7 @@ function certificationLine(name: string, url: string | undefined, style: Templat
   };
 
   return new Paragraph({
+    alignment: AlignmentType.LEFT,
     bullet: { level: 0 },
     spacing: { after: compact ? 20 : 40, line: style.lineSpacing },
     // Certifications are not on the career rail — keep them flush with other sections.

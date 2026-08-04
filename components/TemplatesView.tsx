@@ -1,9 +1,20 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ResumePreview } from "./ResumePreview";
 import { TEMPLATES, type TemplateId } from "@/lib/settings-schema";
 import type { ResumeDoc } from "@/lib/llm/schemas";
+
+const ZOOM_MIN = 0.75;
+const ZOOM_MAX = 1.5;
+const ZOOM_STEP = 0.25;
+const ZOOM_DEFAULT = 1;
+const ZOOM_STORAGE_KEY = "resume-preview-zoom";
+
+function clampZoom(value: number): number {
+  const stepped = Math.round(value / ZOOM_STEP) * ZOOM_STEP;
+  return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Number(stepped.toFixed(2))));
+}
 
 export function TemplatesView({
   initialTemplate,
@@ -18,6 +29,30 @@ export function TemplatesView({
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [zoom, setZoom] = useState(ZOOM_DEFAULT);
+
+  useEffect(() => {
+    try {
+      const stored = window.sessionStorage.getItem(ZOOM_STORAGE_KEY);
+      if (!stored) return;
+      const parsed = Number(stored);
+      if (Number.isFinite(parsed)) setZoom(clampZoom(parsed));
+    } catch {
+      // sessionStorage can be blocked; keep the default zoom.
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      window.sessionStorage.setItem(ZOOM_STORAGE_KEY, String(zoom));
+    } catch {
+      // Ignore persistence failures.
+    }
+  }, [zoom]);
+
+  const zoomOut = () => setZoom((current) => clampZoom(current - ZOOM_STEP));
+  const zoomIn = () => setZoom((current) => clampZoom(current + ZOOM_STEP));
+  const zoomReset = () => setZoom(ZOOM_DEFAULT);
 
   const select = async (id: TemplateId) => {
     if (id === selected && !error) return;
@@ -48,8 +83,12 @@ export function TemplatesView({
     }
   };
 
+  const zoomLabel = `${Math.round(zoom * 100)}%`;
+  const canZoomOut = zoom > ZOOM_MIN;
+  const canZoomIn = zoom < ZOOM_MAX;
+
   return (
-    <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
+    <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(360px,540px)]">
       <section className="panel flex min-h-[70vh] flex-col p-5">
         <p className="text-xs leading-relaxed text-fg-muted">
           Every template is single-column and ATS-safe — parsers read them all cleanly. Pick one and the preview
@@ -85,12 +124,45 @@ export function TemplatesView({
       </section>
 
       <aside className="lg:sticky lg:top-6 lg:self-start">
-        <div className="mb-2 text-sm text-fg">Preview</div>
-        <div className="flex justify-center rounded-xl border border-line bg-panel-2/50 p-4">
-          <ResumePreview resume={previewResume} templateId={selected} />
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <div className="text-sm text-fg">Preview</div>
+          <div className="flex items-center gap-1" role="group" aria-label="Preview zoom">
+            <button
+              type="button"
+              className="rounded border border-line bg-panel px-2 py-0.5 text-xs text-fg-muted transition-colors hover:border-line hover:bg-panel-2 hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
+              aria-label="Zoom out"
+              disabled={!canZoomOut}
+              onClick={zoomOut}
+            >
+              −
+            </button>
+            <button
+              type="button"
+              className="min-w-[3.25rem] rounded border border-line bg-panel px-2 py-0.5 text-xs tabular-nums text-fg-muted transition-colors hover:border-line hover:bg-panel-2 hover:text-fg"
+              aria-label={`Reset zoom to ${Math.round(ZOOM_DEFAULT * 100)} percent`}
+              title="Reset zoom"
+              onClick={zoomReset}
+            >
+              {zoomLabel}
+            </button>
+            <button
+              type="button"
+              className="rounded border border-line bg-panel px-2 py-0.5 text-xs text-fg-muted transition-colors hover:border-line hover:bg-panel-2 hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
+              aria-label="Zoom in"
+              disabled={!canZoomIn}
+              onClick={zoomIn}
+            >
+              +
+            </button>
+          </div>
+        </div>
+        <div className="max-h-[min(78vh,920px)] overflow-auto rounded-xl border border-line bg-panel-2/50 p-4">
+          <div className="mx-auto w-fit" style={{ zoom }}>
+            <ResumePreview resume={previewResume} templateId={selected} />
+          </div>
         </div>
         <p className="mt-2 text-[11px] text-fg-faint">
-          Preview is scaled to fit. The generated DOCX uses the same layout rules at full page size.
+          Zoom {zoomLabel}. The generated PDF uses the same layout rules at full page size.
         </p>
       </aside>
     </div>

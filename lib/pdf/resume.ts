@@ -4,23 +4,21 @@ import type { TemplateId } from "../settings-schema";
 import {
   bandContactColor,
   bandEdgeColor,
-  bandHeadlineColor,
   formatContactLines,
   hex,
   isCobaltRail,
+  pageMarginsInches,
   railColor,
   templateStyle,
   timelineGutterPt,
   usesClearHierarchy,
   usesCompactRhythm,
+  usesStackedRolePlace,
   type TemplateStyle,
 } from "../docx/templates";
 
 const PAGE_WIDTH = 612; // US Letter
 const PAGE_HEIGHT = 792;
-const MARGIN_X = 0.5 * 72;
-/** Top/bottom inset on every page — page 2+ used to flush when band headers forced top: 0. */
-const MARGIN_Y = 0.58 * 72;
 const BULLET = "•"; // U+2022 — present in Helvetica; avoid ● (U+25CF)
 
 /**
@@ -29,21 +27,20 @@ const BULLET = "•"; // U+2022 — present in Helvetica; avoid ● (U+25CF)
  */
 export async function renderResumePdf(resume: ResumeDoc, templateId: TemplateId): Promise<Buffer> {
   const style = templateStyle(templateId);
-  const compact = usesCompactRhythm(style);
   const band =
     style.layout === "band" || (style.layout === "timeline" && style.nameColor.toUpperCase() === "FFFFFF");
-  // Timeline rail lives in an experience gutter — keep page margins normal so the
-  // masthead and skills keep full measure (long headlines wrap less awkwardly).
-  const left = compact ? 0.45 * 72 : MARGIN_X;
+  const margins = pageMarginsInches(style);
+  const left = margins.x * 72;
   const right = left;
-  const marginY = compact ? 0.42 * 72 : MARGIN_Y;
+  const marginTop = margins.top * 72;
+  const marginBottom = margins.bottom * 72;
 
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({
       size: "LETTER",
       // Keep a real top margin on all pages so continued bullets aren't flush to the edge.
       // Band headers paint into the top margin on page 1 only.
-      margins: { top: marginY, bottom: marginY, left, right },
+      margins: { top: marginTop, bottom: marginBottom, left, right },
       info: {
         Title: `${resume.name} — ${resume.headline}`.trim(),
         Author: resume.name || "Resume Tailor",
@@ -89,9 +86,6 @@ function writeHeader(
   const nameFont = resolveFont(style.headingFont, true);
   const bodyFont = resolveFont(style.bodyFont, false);
   const nameH = heightOf(doc, resume.name.toUpperCase(), nameFont, style.nameSizePt, width);
-  const headlineH = resume.headline
-    ? heightOf(doc, resume.headline, bodyFont, style.headlineSizePt, width) + (compact ? 2 : 3)
-    : 0;
   const contact = formatContactLines(resume.contactLine).join("\n");
   const contactPt = Math.max(bodyPt - (cobalt ? 0.25 : 0.5), 8);
   const contactH = contact
@@ -99,7 +93,7 @@ function writeHeader(
     : 0;
   const padTop = compact ? (cobalt ? 14 : 12) : 18;
   const padBottom = compact ? (cobalt ? 11 : 9) : 14;
-  const bandHeight = padTop + nameH + headlineH + contactH + padBottom;
+  const bandHeight = padTop + nameH + contactH + padBottom;
 
   if (band) {
     doc.save();
@@ -128,15 +122,6 @@ function writeHeader(
       lineGap: 0,
       characterSpacing: compact ? (cobalt ? 0.75 : 0.9) : 0,
     });
-
-  if (resume.headline) {
-    doc.moveDown(compact ? 0.12 : 0.12);
-    doc
-      .font(bodyFont)
-      .fontSize(style.headlineSizePt)
-      .fillColor(band ? hex(bandHeadlineColor(style)) : muted)
-      .text(resume.headline, { align, width, lineGap: cobalt ? 1.2 : 0 });
-  }
 
   if (contact) {
     doc.moveDown(compact ? 0.14 : 0.15);
@@ -167,6 +152,7 @@ function writeBody(doc: PDFKit.PDFDocument, resume: ResumeDoc, style: TemplateSt
   const compact = usesCompactRhythm(style);
   const cobalt = isCobaltRail(style);
   const hierarchy = usesClearHierarchy(style);
+  const stacked = usesStackedRolePlace(style);
   const timeline = style.layout === "timeline";
   const cards = style.layout === "cards";
   const left = doc.page.margins.left;
@@ -179,13 +165,14 @@ function writeBody(doc: PDFKit.PDFDocument, resume: ResumeDoc, style: TemplateSt
   const gutter = timelineGutterPt(style);
   const railX = left + (gutter > 0 ? gutter * 0.35 : -10);
   const rail = hex(railColor(style));
-  const summaryGap = compact ? (cobalt ? 1.35 : 1.15) : hierarchy ? 2.2 : 1.4;
-  const bulletGap = compact ? (cobalt ? 0.35 : 0.2) : 0.7;
-  const roleGap = compact ? (cobalt ? 2.4 : 1.6) : 3.5;
+  // Stack reference (~13pt leading on 10pt): keep paragraph lineGap modest.
+  const summaryGap = compact ? (cobalt ? 1.35 : 1.15) : stacked ? 2.8 : hierarchy ? 2.2 : 1.4;
+  const bulletGap = compact ? (cobalt ? 0.35 : 0.2) : stacked ? 2.6 : 0.7;
+  const roleGap = compact ? (cobalt ? 2.4 : 1.6) : stacked ? 10 : 3.5;
 
   const section = (title: string) => {
-    ensureSpace(doc, compact ? 28 : 36);
-    doc.y += slateBar ? 8 : compact ? (cobalt ? 3.5 : 2.5) : 6;
+    ensureSpace(doc, compact ? 28 : stacked ? 40 : 36);
+    doc.y += slateBar ? 8 : compact ? (cobalt ? 3.5 : 2.5) : stacked ? 12 : 6;
     const titleY = doc.y;
     const barHeight = style.headingSizePt + (slateBar ? 10 : 6);
 
@@ -207,13 +194,14 @@ function writeBody(doc: PDFKit.PDFDocument, resume: ResumeDoc, style: TemplateSt
         // spaces into extracted text and can hurt ATS keyword matching.
         characterSpacing: slateBar ? 1.1 : compact ? (cobalt ? 0.85 : 0.7) : 0.6,
         lineGap: 0,
+        align: "left",
       });
 
     if (style.headingRule && !slateBar) {
       const y = doc.y + (compact ? 1.5 : 2);
       const ruleWidth = style.headingRuleFullWidth ? contentWidth : contentWidth * 0.42;
       strokeRule(doc, left, y, ruleWidth, accent, compact ? (cobalt ? 1.5 : 1.25) : 1.15);
-      doc.y = y + (compact ? (cobalt ? 4 : 3.2) : 5);
+      doc.y = y + (compact ? (cobalt ? 4 : 3.2) : stacked ? 8 : 5);
     } else if (slateBar) {
       doc.y = titleY - 3 + barHeight + 6;
     } else {
@@ -248,11 +236,12 @@ function writeBody(doc: PDFKit.PDFDocument, resume: ResumeDoc, style: TemplateSt
           continued: Boolean(group.items.length),
           width: contentWidth,
           lineGap: compact ? 0.6 : 1,
+          align: "left",
         });
       doc
         .font(bodyFont)
         .fillColor(body)
-        .text(group.items.join(", "), { width: contentWidth, lineGap: compact ? 0.6 : 1 });
+        .text(group.items.join(", "), { width: contentWidth, lineGap: compact ? 0.6 : 1, align: "left" });
       doc.y += compact ? (cobalt ? 1.1 : 0.4) : 1;
     }
   }
@@ -299,34 +288,72 @@ function writeBody(doc: PDFKit.PDFDocument, resume: ResumeDoc, style: TemplateSt
         railCursorY = dotY;
       }
 
-      // Company (left) + period (right) on one baseline.
+      // Stack place: Company | Location, then Role | Period (Juan.pdf).
+      // Default hierarchy: Company | Period, then Role · Location.
       const company = role.company || role.role;
       const companyColor = timeline || hierarchy ? accent : body;
-      const companySize = bodyPt + (compact ? (cobalt ? 0.45 : 0.35) : hierarchy ? 0.6 : 0.4);
-      doc.font(bodyBold).fontSize(companySize).fillColor(companyColor);
-      const companyWidth = roleWidth * 0.64;
-      const periodWidth = roleWidth * 0.36;
-      const companyH = heightOf(doc, company, bodyBold, companySize, companyWidth);
-      const periodH = role.period
-        ? heightOf(doc, role.period, bodyFont, bodyPt - 0.4, periodWidth)
+      // Clearly larger than role/body so company leads each entry.
+      const companySize = bodyPt + (compact ? 1.75 : stacked || hierarchy ? 2.25 : 2);
+      const leftWidth = roleWidth * 0.64;
+      const rightWidth = roleWidth * 0.36;
+      const rightText = stacked ? role.location : role.period;
+      const companyH = heightOf(doc, company, bodyBold, companySize, leftWidth);
+      const rightH = rightText
+        ? heightOf(doc, rightText, bodyFont, bodyPt - 0.4, rightWidth)
         : 0;
-      const rowH = Math.max(companyH, periodH);
+      const rowH = Math.max(companyH, rightH);
 
-      doc.text(company, companyX, roleTop, { width: companyWidth, lineGap: 0 });
-      if (role.period) {
+      doc
+        .font(bodyBold)
+        .fontSize(companySize)
+        .fillColor(companyColor)
+        .text(company, companyX, roleTop, { width: leftWidth, lineGap: 0, align: "left" });
+      if (rightText) {
         doc
           .font(bodyFont)
           .fontSize(bodyPt - 0.4)
           .fillColor(muted)
-          .text(role.period, companyX + companyWidth, roleTop, {
-            width: periodWidth,
+          .text(rightText, companyX + leftWidth, roleTop, {
+            width: rightWidth,
             align: "right",
             lineGap: 0,
           });
       }
-      doc.y = roleTop + rowH + (compact ? 1 : hierarchy ? 2 : 1);
+      doc.y = roleTop + rowH + (compact ? 1 : stacked ? 3 : hierarchy ? 2 : 1);
 
-      if (hierarchy) {
+      if (stacked) {
+        const roleTitle = role.role && role.company ? role.role : role.role || "";
+        if (roleTitle || role.period) {
+          const metaTop = doc.y;
+          if (roleTitle) {
+            doc
+              .font(bodyFont)
+              .fontSize(bodyPt)
+              .fillColor(body)
+              .text(roleTitle, companyX, metaTop, {
+                width: leftWidth,
+                lineGap: 0,
+                align: "left",
+              });
+          }
+          if (role.period) {
+            doc
+              .font(bodyFont)
+              .fontSize(bodyPt - 0.4)
+              .fillColor(muted)
+              .text(role.period, companyX + leftWidth, metaTop, {
+                width: rightWidth,
+                align: "right",
+                lineGap: 0,
+              });
+          }
+          const titleH = roleTitle ? heightOf(doc, roleTitle, bodyFont, bodyPt, leftWidth) : 0;
+          const periodH = role.period
+            ? heightOf(doc, role.period, bodyFont, bodyPt - 0.4, rightWidth)
+            : 0;
+          doc.y = metaTop + Math.max(titleH, periodH) + (compact ? 1.2 : 3);
+        }
+      } else if (hierarchy) {
         const roleTitle = role.role && role.company ? role.role : "";
         if (roleTitle) {
           doc
@@ -337,13 +364,14 @@ function writeBody(doc: PDFKit.PDFDocument, resume: ResumeDoc, style: TemplateSt
               continued: Boolean(role.location),
               width: roleWidth,
               lineGap: 0,
+              align: "left",
             });
           if (role.location) {
             doc
               .font(bodyItalic)
               .fontSize(bodyPt - 0.4)
               .fillColor(muted)
-              .text(` · ${role.location}`, { width: roleWidth, lineGap: 0 });
+              .text(` · ${role.location}`, { width: roleWidth, lineGap: 0, align: "left" });
           }
           doc.y += compact ? 1.2 : 2;
         } else if (role.location) {
@@ -351,7 +379,7 @@ function writeBody(doc: PDFKit.PDFDocument, resume: ResumeDoc, style: TemplateSt
             .font(bodyItalic)
             .fontSize(bodyPt - 0.4)
             .fillColor(muted)
-            .text(role.location, companyX, doc.y, { width: roleWidth, lineGap: 0 });
+            .text(role.location, companyX, doc.y, { width: roleWidth, lineGap: 0, align: "left" });
           doc.y += compact ? 1.2 : 2;
         }
       } else {
@@ -361,7 +389,7 @@ function writeBody(doc: PDFKit.PDFDocument, resume: ResumeDoc, style: TemplateSt
             .font(bodyItalic)
             .fontSize(bodyPt - 0.2)
             .fillColor(muted)
-            .text(meta, companyX, doc.y, { width: roleWidth, lineGap: 0 });
+            .text(meta, companyX, doc.y, { width: roleWidth, lineGap: 0, align: "left" });
           doc.y += 2;
         }
       }
@@ -374,7 +402,7 @@ function writeBody(doc: PDFKit.PDFDocument, resume: ResumeDoc, style: TemplateSt
         doc
           .font(bodyItalic)
           .fontSize(compact ? bodyPt - 0.15 : bodyPt)
-          .fillColor(body)
+          .fillColor(muted)
           .text(role.overview, companyX, doc.y, {
             width: roleWidth,
             lineGap: compact ? 0.55 : 1.2,
@@ -414,11 +442,12 @@ function writeBody(doc: PDFKit.PDFDocument, resume: ResumeDoc, style: TemplateSt
             continued: true,
             width: roleWidth,
             lineGap: compact ? 0.6 : 1,
+            align: "left",
           });
         doc
           .font(bodyItalic)
           .fillColor(muted)
-          .text(role.technologies.join(", "), { width: roleWidth, lineGap: compact ? 0.6 : 1 });
+          .text(role.technologies.join(", "), { width: roleWidth, lineGap: compact ? 0.6 : 1, align: "left" });
         doc.y += compact ? 0.4 : 1;
       }
 
@@ -462,12 +491,20 @@ function writeBody(doc: PDFKit.PDFDocument, resume: ResumeDoc, style: TemplateSt
         continued: project.tech.length > 0,
         width: contentWidth,
         lineGap: 0,
+        align: "left",
       });
       if (project.tech.length > 0) {
-        doc.font(bodyFont).fillColor(muted).text(` — ${project.tech.join(", ")}`, { width: contentWidth });
+        doc.font(bodyFont).fillColor(muted).text(` — ${project.tech.join(", ")}`, {
+          width: contentWidth,
+          align: "left",
+        });
       }
       if (project.description) {
-        doc.font(bodyFont).fillColor(body).text(project.description, { width: contentWidth, lineGap: 1 });
+        doc.font(bodyFont).fillColor(body).text(project.description, {
+          width: contentWidth,
+          lineGap: 1,
+          align: "left",
+        });
       }
       doc.y += 2;
     }
@@ -478,13 +515,13 @@ function writeBody(doc: PDFKit.PDFDocument, resume: ResumeDoc, style: TemplateSt
     section("Education");
     for (const entry of education) {
       ensureSpace(doc, compact ? 22 : 28);
-      const title = entry.degree || entry.school;
+      const title = entry.school || entry.degree;
       const titleWidth = contentWidth * 0.68;
       const periodWidth = contentWidth * 0.32;
       const top = doc.y;
       doc.font(bodyBold).fontSize(bodyPt).fillColor(hierarchy ? accent : body);
       const titleH = heightOf(doc, title, bodyBold, bodyPt, titleWidth);
-      doc.text(title, left, top, { width: titleWidth, lineGap: 0 });
+      doc.text(title, left, top, { width: titleWidth, lineGap: 0, align: "left" });
       if (entry.period) {
         doc
           .font(bodyFont)
@@ -493,13 +530,14 @@ function writeBody(doc: PDFKit.PDFDocument, resume: ResumeDoc, style: TemplateSt
           .text(entry.period, left + titleWidth, top, { width: periodWidth, align: "right", lineGap: 0 });
       }
       doc.y = top + titleH + (compact ? 0.5 : 1);
-      const detail = [entry.school && entry.degree ? entry.school : "", entry.location, entry.gpa ? `GPA ${entry.gpa}` : ""]
+      const detail = [entry.degree && entry.school ? entry.degree : "", entry.location, entry.gpa ? `GPA ${entry.gpa}` : ""]
         .filter(Boolean)
         .join(" · ");
       if (detail) {
         doc.font(bodyFont).fillColor(muted).fontSize(bodyPt - 0.2).text(detail, left, doc.y, {
           width: contentWidth,
           lineGap: 0,
+          align: "left",
         });
       }
       doc.y += compact ? 1.5 : 3;
@@ -516,7 +554,7 @@ function writeBody(doc: PDFKit.PDFDocument, resume: ResumeDoc, style: TemplateSt
         resume.languages.map((entry) => [entry.name, entry.level].filter(Boolean).join(" — ")).join(" · "),
         left,
         doc.y,
-        { width: contentWidth, lineGap: 1 },
+        { width: contentWidth, lineGap: 1, align: "left" },
       );
   }
 
@@ -535,6 +573,7 @@ function writeBody(doc: PDFKit.PDFDocument, resume: ResumeDoc, style: TemplateSt
           lineGap: compact ? 0.4 : 1,
           link: href || undefined,
           underline: Boolean(href),
+          align: "left",
         });
       doc.y += compact ? 0.2 : 1;
     }
@@ -543,6 +582,8 @@ function writeBody(doc: PDFKit.PDFDocument, resume: ResumeDoc, style: TemplateSt
 
 /** Slightly denser than DOCX so long bullet lists stay readable on fewer pages. */
 function pdfBodySize(style: TemplateStyle): number {
+  // Stack reference keeps full 10pt body — don't compress Midnight Navy.
+  if (usesStackedRolePlace(style)) return style.bodySizePt;
   if (usesCompactRhythm(style)) return Math.max(8.4, style.bodySizePt - 0.65);
   return Math.max(8.75, style.bodySizePt - 1);
 }
