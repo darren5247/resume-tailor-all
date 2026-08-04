@@ -1,0 +1,164 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ink: #050907;
+  --color-surface: #0a100d;
+  --color-panel: #0d1512;
+  --color-panel-2: #111b17;
+  --color-line: #1c2c25;
+  --color-line-soft: #16241e;
+
+  --color-accent: #4ade80;
+  --color-accent-dim: #22c55e;
+  --color-accent-deep: #14532d;
+
+  --color-fg: #d7e5dd;
+  --color-fg-muted: #7f9689;
+  --color-fg-faint: #5c7167;
+
+  --color-danger: #f87171;
+  --color-danger-deep: #45161a;
+  --color-warn: #fbbf24;
+
+  --font-display: Georgia, "Times New Roman", serif;
+}
+
+html,
+body {
+  background: var(--color-ink);
+  color: var(--color-fg);
+}
+
+body {
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 14px;
+  background-image: radial-gradient(
+    900px 500px at 50% -10%,
+    rgba(34, 197, 94, 0.08),
+    transparent 70%
+  );
+  background-attachment: fixed;
+  min-height: 100vh;
+}
+
+::selection {
+  background: rgba(74, 222, 128, 0.3);
+}
+
+input,
+textarea,
+select,
+button {
+  font: inherit;
+}
+
+/* Inputs and panels share one look so the whole page reads as a single surface. */
+.field {
+  width: 100%;
+  border-radius: 6px;
+  border: 1px solid var(--color-line);
+  background: var(--color-ink);
+  color: var(--color-fg);
+  padding: 8px 10px;
+  outline: none;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.field:focus {
+  border-color: var(--color-accent-dim);
+  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.12);
+}
+
+.field::placeholder {
+  color: var(--color-fg-faint);
+}
+
+.panel {
+  border: 1px solid var(--color-line);
+  border-radius: 10px;
+  background: var(--color-panel);
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: 6px;
+  border: 1px solid var(--color-line);
+  background: var(--color-panel-2);
+  color: var(--color-fg);
+  padding: 7px 14px;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, opacity 120ms ease;
+}
+
+.btn:hover:not(:disabled) {
+  background: #16241e;
+  border-color: #263c33;
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: var(--color-accent-deep);
+  border-color: #1f6b3d;
+  color: #d9fbe6;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: #17603a;
+  border-color: #2a8c52;
+}
+
+.btn-danger {
+  background: var(--color-danger-deep);
+  border-color: #6b2226;
+  color: #fecaca;
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: #5a1d21;
+}
+
+textarea.field {
+  resize: vertical;
+  font-family: ui-monospace, "Cascadia Mono", Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+/* Scrollbars, so the dark surface does not get interrupted by a light gutter. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #24382f transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: #24382f;
+  border-radius: 8px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+@keyframes pulse-soft {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.animate-pulse-soft {
+  animation: pulse-soft 1.4s ease-in-out infinite;
+}

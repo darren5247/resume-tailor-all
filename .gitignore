@@ -1,0 +1,12 @@
+node_modules/
+.next/
+next-env.d.ts
+*.tsbuildinfo
+
+# Local state: profile, settings (contains the API key), run history
+data/
+# Generated resume packets
+output/
+
+.env
+.env.local
