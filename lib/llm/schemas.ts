@@ -1,5 +1,12 @@
 import { z } from "zod";
 
+/**
+ * How the role is performed. Prefer "remote" when a fully remote option exists
+ * even if hybrid/onsite alternatives are also offered.
+ */
+export const WorkplaceTypeSchema = z.enum(["remote", "hybrid", "onsite", "unspecified"]).default("unspecified");
+export type WorkplaceType = z.infer<typeof WorkplaceTypeSchema>;
+
 /** Structured job description, the output of the Extract step. */
 export const JobSpecSchema = z.object({
   title: z.string().default(""),
@@ -7,6 +14,17 @@ export const JobSpecSchema = z.object({
   location: z.string().default(""),
   seniority: z.string().default(""),
   employmentType: z.string().default(""),
+  /**
+   * remote = fully remote is allowed; hybrid/onsite = in-office presence is required
+   * (no fully remote option); unspecified = posting does not say.
+   */
+  workplaceType: WorkplaceTypeSchema,
+  /**
+   * Countries/regions where the candidate must live or be based, when the posting
+   * explicitly requires it (e.g. "US only", "must be located in Canada").
+   * Empty when unrestricted, worldwide, or unstated. Prefer English country names.
+   */
+  requiredBaseCountries: z.array(z.string()).default([]),
   summary: z.string().default(""),
   responsibilities: z.array(z.string()).default([]),
   mustHave: z.array(z.string()).default([]),
@@ -14,6 +32,17 @@ export const JobSpecSchema = z.object({
   /** Exact surface forms an ATS would match on, e.g. "Kubernetes", "CI/CD". */
   keywords: z.array(z.string()).default([]),
   tech: z.array(z.string()).default([]),
+  /**
+   * Stated pay from the posting in plain language, e.g. "$90k–$110k / year" or
+   * "COP 8M / month". Empty when the posting does not mention compensation.
+   */
+  salaryExpectation: z.string().default(""),
+  /**
+   * Highest stated figure converted to monthly USD for eligibility gating.
+   * Yearly ÷ 12, hourly × 160, weekly × 4.33. Null when pay is unstated or
+   * cannot be converted (equity-only, "competitive", etc.).
+   */
+  salaryMonthlyUsd: z.number().nullable().default(null),
 });
 
 export type JobSpec = z.infer<typeof JobSpecSchema>;

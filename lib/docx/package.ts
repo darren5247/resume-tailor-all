@@ -28,6 +28,8 @@ export interface PacketRequest {
   resumePdf: Buffer;
   coverLetterDocx: Buffer | null;
   jobDescription: string;
+  /** Structured JD from the Extract step (JobSpec). */
+  extractedJd?: unknown;
   metadata: unknown;
 }
 
@@ -55,6 +57,12 @@ export async function writePacket(request: PacketRequest): Promise<Packet> {
     { name: "job-description.txt", content: request.jobDescription },
     { name: "metadata.json", content: JSON.stringify(request.metadata, null, 2) },
   ];
+  if (request.extractedJd !== undefined) {
+    files.push({
+      name: "extracted-jd.json",
+      content: JSON.stringify(request.extractedJd, null, 2),
+    });
+  }
   if (request.coverLetterDocx) {
     files.splice(2, 0, { name: coverName, content: request.coverLetterDocx });
   }

@@ -15,6 +15,7 @@ import { inspectUrl } from "../scrape/detect";
 import { fetchJobDescription, finalize } from "../scrape/fetchJd";
 import { ScrapeError, type JdSource } from "../scrape/types";
 import { scoreResume } from "../score/ats";
+import { checkColombiaJobEligibility, checkSalaryEligibility } from "./eligibility";
 import { getRun, update, updateJob } from "./store";
 import { initialSteps, type DownloadRef, type StepId } from "./types";
 
@@ -100,6 +101,15 @@ export async function processJob(runId: string, jobId: string, pastedJd?: string
 
     throwIfAborted(signal);
     const colombia = profile.country === "Colombia";
+    setStep("generate", "active", "Checking salary / eligibility...");
+    const salaryEligibility = checkSalaryEligibility(spec);
+    if (!salaryEligibility.ok) throw new Error(salaryEligibility.reason);
+    if (colombia) {
+      setStep("generate", "active", "Checking remote / location eligibility...");
+      const eligibility = checkColombiaJobEligibility(spec);
+      if (!eligibility.ok) throw new Error(eligibility.reason);
+    }
+
     const detectedRole = colombia ? null : detectTargetRole(profile, spec);
     setStep(
       "generate",
@@ -174,6 +184,7 @@ export async function processJob(runId: string, jobId: string, pastedJd?: string
       resumePdf,
       coverLetterDocx: coverDocx,
       jobDescription: `${url}\n\n${source.text}`,
+      extractedJd: spec,
       metadata: {
         url,
         scrapedVia: source.method,
