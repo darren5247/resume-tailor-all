@@ -4,7 +4,8 @@ import { RunSetupError, startRun } from "@/lib/pipeline/runner";
 import { listRuns } from "@/lib/pipeline/store";
 
 export const runtime = "nodejs";
-export const maxDuration = 3600;
+// Hobby Fluid max is 300s; higher values fail at "Deploying outputs…".
+export const maxDuration = 300;
 
 export async function GET() {
   return NextResponse.json(
