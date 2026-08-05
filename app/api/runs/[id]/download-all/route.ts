@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import path from "node:path";
 import { Readable } from "node:stream";
-import { createFolderArchive } from "@/lib/docx/package";
+import { createFolderArchive } from "@/lib/docx/archive";
 import { getState, loadPersistedRun } from "@/lib/pipeline/store";
 import { slugify } from "@/lib/paths";
 
@@ -13,14 +13,15 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   const state = getState(id) ?? (await loadPersistedRun(id));
   if (!state) return NextResponse.json({ error: "Unknown run" }, { status: 404 });
 
-  const root = path.resolve(state.outputDir);
+  // Runtime output dir from settings — not part of the deploy NFT graph.
+  const root = path.resolve(/* turbopackIgnore: true */ state.outputDir);
   const seen = new Set<string>();
   const entries: { folder: string; name: string }[] = [];
 
   for (const job of state.jobs) {
     if (job.status !== "done" || job.downloads.length === 0) continue;
 
-    const folder = path.resolve(root, path.dirname(job.downloads[0].file));
+    const folder = path.resolve(/* turbopackIgnore: true */ root, path.dirname(job.downloads[0].file));
     if (folder !== root && !folder.startsWith(root + path.sep)) continue;
 
     let name = path.basename(folder);

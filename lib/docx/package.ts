@@ -1,13 +1,9 @@
-import archiver, { type Archiver } from "archiver";
-import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
+import { zipFiles, type ArchiveFile } from "./archive";
 import { ensureDir, safeFileName, slugify } from "../paths";
 
-export interface PacketFile {
-  name: string;
-  content: Buffer | string;
-}
+export interface PacketFile extends ArchiveFile {}
 
 export interface Packet {
   /** Absolute path of the job folder. */
@@ -43,7 +39,9 @@ export async function writePacket(request: PacketRequest): Promise<Packet> {
     .filter(Boolean)
     .join("_");
 
-  const folder = await uniqueFolder(path.join(request.outputDir, base));
+  const folder = await uniqueFolder(
+    path.join(/* turbopackIgnore: true */ request.outputDir, base),
+  );
   await ensureDir(folder);
 
   const person = safeFileName(request.firstName || "Candidate");
@@ -68,21 +66,24 @@ export async function writePacket(request: PacketRequest): Promise<Packet> {
   }
 
   for (const file of files) {
-    await fsp.writeFile(path.join(folder, file.name), file.content);
+    const target = path.join(/* turbopackIgnore: true */ folder, file.name);
+    await fsp.writeFile(target, file.content);
   }
 
   const zipName = `${safeFileName(slugify(request.company || "company", 32))}-${safeFileName(
     slugify(request.role || "role", 48),
   )}.zip`;
-  const zipPath = path.join(folder, zipName);
+  const zipPath = path.join(/* turbopackIgnore: true */ folder, zipName);
   await zipFiles(zipPath, files);
 
   return {
     folder,
     zip: zipPath,
-    resume: path.join(folder, resumeName),
-    resumePdf: path.join(folder, resumePdfName),
-    coverLetter: request.coverLetterDocx ? path.join(folder, coverName) : null,
+    resume: path.join(/* turbopackIgnore: true */ folder, resumeName),
+    resumePdf: path.join(/* turbopackIgnore: true */ folder, resumePdfName),
+    coverLetter: request.coverLetterDocx
+      ? path.join(/* turbopackIgnore: true */ folder, coverName)
+      : null,
   };
 }
 
@@ -103,36 +104,4 @@ async function exists(target: string): Promise<boolean> {
   } catch {
     return false;
   }
-}
-
-function newArchive(): Archiver {
-  return archiver("zip", { zlib: { level: 9 } });
-}
-
-export function zipFiles(destination: string, files: PacketFile[]): Promise<void> {
-  const archive = newArchive();
-
-  return new Promise((resolve, reject) => {
-    const output = fs.createWriteStream(destination);
-
-    output.on("close", () => resolve());
-    output.on("error", reject);
-    archive.on("error", reject);
-    archive.pipe(output);
-
-    for (const file of files) {
-      archive.append(file.content, { name: file.name });
-    }
-    void archive.finalize();
-  });
-}
-
-/** Bulk download: stream a zip of many folders without staging it on disk. */
-export function createFolderArchive(entries: { folder: string; name: string }[]): Archiver {
-  const archive = newArchive();
-  for (const entry of entries) {
-    archive.directory(entry.folder, entry.name);
-  }
-  void archive.finalize();
-  return archive;
 }

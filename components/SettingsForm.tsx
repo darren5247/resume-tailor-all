@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { TEMPLATES } from "@/lib/settings-schema";
+import { TEMPLATES, type Settings } from "@/lib/settings-schema";
 
 type RedactedSettings = Settings & { hasApiKey: boolean; apiKeyFromEnv: boolean };
 
