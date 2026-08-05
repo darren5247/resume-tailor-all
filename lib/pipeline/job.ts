@@ -15,7 +15,7 @@ import { inspectUrl } from "../scrape/detect";
 import { fetchJobDescription, finalize } from "../scrape/fetchJd";
 import { ScrapeError, type JdSource } from "../scrape/types";
 import { scoreResume } from "../score/ats";
-import { checkColombiaJobEligibility, checkSalaryEligibility } from "./eligibility";
+import { checkSalaryEligibility, colombiaWorkplaceAlert } from "./eligibility";
 import { getRun, update, updateJob } from "./store";
 import { initialSteps, type DownloadRef, type StepId } from "./types";
 
@@ -104,11 +104,8 @@ export async function processJob(runId: string, jobId: string, pastedJd?: string
     setStep("generate", "active", "Checking salary / eligibility...");
     const salaryEligibility = checkSalaryEligibility(spec);
     if (!salaryEligibility.ok) throw new Error(salaryEligibility.reason);
-    if (colombia) {
-      setStep("generate", "active", "Checking remote / location eligibility...");
-      const eligibility = checkColombiaJobEligibility(spec);
-      if (!eligibility.ok) throw new Error(eligibility.reason);
-    }
+    const workplaceAlert = colombia ? colombiaWorkplaceAlert(spec) : null;
+    if (workplaceAlert) note(workplaceAlert);
 
     const detectedRole = colombia ? null : detectTargetRole(profile, spec);
     setStep(
@@ -130,7 +127,7 @@ export async function processJob(runId: string, jobId: string, pastedJd?: string
     throwIfAborted(signal);
     setStep("validate", "active", colombia ? "Assembling resume..." : "Fact-checking against your profile...");
     let report: ValidationReport = colombia
-      ? { violations: [], warnings: [] }
+      ? { violations: [], warnings: workplaceAlert ? [workplaceAlert] : [] }
       : validateDraft(profile, spec, draft);
 
     // One repair round-trip (US only). Colombia follows the resume prompt alone —
