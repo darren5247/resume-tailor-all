@@ -1,10 +1,22 @@
 import path from "node:path";
+import os from "node:os";
 import fs from "node:fs/promises";
 
-export const ROOT = /* turbopackIgnore: true */ process.cwd();
-export const DATA_DIR = path.join(/* turbopackIgnore: true */ process.cwd(), "data");
+/**
+ * Local runs write under the project root. On Vercel/Lambda the deploy dir is
+ * read-only, so runtime paths must live under the writable temp dir.
+ */
+function writableRoot(): string {
+  if (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME) {
+    return path.join(os.tmpdir(), "resume-tailor");
+  }
+  return /* turbopackIgnore: true */ process.cwd();
+}
+
+export const ROOT = writableRoot();
+export const DATA_DIR = path.join(ROOT, "data");
 export const RUNS_DIR = path.join(DATA_DIR, "runs");
-export const DEFAULT_OUTPUT_DIR = path.join(/* turbopackIgnore: true */ process.cwd(), "output");
+export const DEFAULT_OUTPUT_DIR = path.join(ROOT, "output");
 
 /** Legacy single-profile file; migrated into profiles/ on first load. */
 export const PROFILE_FILE = path.join(DATA_DIR, "profile.json");
