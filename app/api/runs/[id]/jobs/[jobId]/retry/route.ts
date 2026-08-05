@@ -4,7 +4,7 @@ import { MIN_JD_LENGTH } from "@/lib/scrape/types";
 
 export const runtime = "nodejs";
 // Hobby Fluid max is 300s; higher values fail at "Deploying outputs…".
-export const maxDuration = 300;
+export const maxDuration = 250;
 
 /**
  * Re-runs one job. With `pastedJd` the scrape and fetch steps are skipped
