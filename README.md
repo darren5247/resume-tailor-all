@@ -83,6 +83,8 @@ All four templates are single column with no tables, text boxes, headers or foot
 
 `npx playwright install chromium` downloads about 150 MB. Without it the app still runs and simply loses the fourth rung of the ladder; it will tell you so in the failure detail. You can also turn the rung off in Settings.
 
+Re-run that command after any Playwright upgrade. Each release pins a browser build, so an `npm install` that bumps Playwright leaves the old build on disk and quietly disables the rung until the matching one is downloaded.
+
 ## Testing the scraper without spending tokens
 
 ```bash

@@ -27,6 +27,9 @@ export interface FetchOptions {
   retries?: number;
   /** Treat 404 as a definitive answer instead of retrying it. */
   accept?: string;
+  /** "manual" exposes the Location header instead of chasing it, which is the
+   * only way through hosts that 302 to themselves to plant a cookie. */
+  redirect?: "follow" | "manual";
 }
 
 export interface HttpResponse {
@@ -35,6 +38,10 @@ export interface HttpResponse {
   body: string;
   finalUrl: string;
   contentType: string;
+  /** Redirect target when the request was made with `redirect: "manual"`. */
+  location: string | null;
+  /** Cookies the response asked us to set, as a ready-to-send header value. */
+  cookie: string | null;
 }
 
 export async function politeFetch(url: string, options: FetchOptions = {}): Promise<HttpResponse> {
@@ -68,7 +75,7 @@ async function attempt(url: string, options: FetchOptions): Promise<HttpResponse
           ...options.headers,
         },
         body: options.body,
-        redirect: "follow",
+        redirect: options.redirect ?? "follow",
         signal: controller.signal,
       });
 
@@ -84,6 +91,8 @@ async function attempt(url: string, options: FetchOptions): Promise<HttpResponse
         body: await response.text(),
         finalUrl: response.url || url,
         contentType: response.headers.get("content-type") ?? "",
+        location: response.headers.get("location"),
+        cookie: cookieHeader(response.headers),
       };
     } catch (error) {
       lastError = error;
@@ -109,6 +118,14 @@ export async function fetchJson<T>(url: string, options: FetchOptions = {}): Pro
   } catch {
     return null;
   }
+}
+
+function cookieHeader(headers: Headers): string | null {
+  const raw = typeof headers.getSetCookie === "function" ? headers.getSetCookie() : [];
+  const pairs = raw
+    .map((entry) => entry.split(";", 1)[0].trim())
+    .filter((pair) => pair.includes("="));
+  return pairs.length ? pairs.join("; ") : null;
 }
 
 export function delay(ms: number): Promise<void> {

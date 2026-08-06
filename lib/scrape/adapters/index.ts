@@ -1,4 +1,5 @@
 import type { Adapter } from "../types";
+import { adpAdapter } from "./adp";
 import { ashbyAdapter } from "./ashby";
 import { bambooHrAdapter } from "./bamboohr";
 import { breezyAdapter } from "./breezy";
@@ -9,6 +10,7 @@ import { greenhouseAdapter } from "./greenhouse";
 import { hireologyAdapter } from "./hireology";
 import { icimsAdapter } from "./icims";
 import { jazzHrAdapter } from "./jazzhr";
+import { jobdivaAdapter } from "./jobdiva";
 import { jobviteAdapter } from "./jobvite";
 import { joinAdapter } from "./join";
 import { leverAdapter } from "./lever";
@@ -49,6 +51,8 @@ export const ADAPTERS: Adapter[] = [
   oracleCloudAdapter,
   ultiproAdapter,
   zohoAdapter,
+  adpAdapter,
+  jobdivaAdapter,
 ];
 
 export function detectAdapter(url: URL): Adapter | null {

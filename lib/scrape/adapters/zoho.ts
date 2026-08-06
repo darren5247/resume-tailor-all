@@ -1,6 +1,6 @@
 import * as cheerio from "cheerio";
 import { politeFetch } from "../http";
-import { htmlToText, normalizeWhitespace } from "../html";
+import { collectJsonParseLiterals, htmlToText, normalizeWhitespace } from "../html";
 import type { Adapter, JdSource } from "../types";
 
 interface ZohoJob {
@@ -16,9 +16,12 @@ interface ZohoJob {
 }
 
 /**
- * Zoho Recruit career portals embed the full openings array as JSON in a hidden
- * `#jobs` input on the board page. Detail URLs are SPA shells without that blob,
- * so we always resolve the numeric job id against `/jobs/{portal}`.
+ * Zoho Recruit career portals ship the openings array as JSON inside the page
+ * rather than rendering the posting into the DOM: detail pages declare
+ * `var jobs = JSON.parse('...')` with every quote escaped as `\x22`, and older
+ * boards put the same array in a hidden `#jobs` input. Either way the visible
+ * body is built client side, so both text extraction and readability come back
+ * empty and the blob is the only source.
  */
 export const zohoAdapter: Adapter = {
   id: "zoho",
@@ -31,14 +34,19 @@ export const zohoAdapter: Adapter = {
     const parsed = parseZohoPath(url);
     if (!parsed?.jobId) return null;
 
-    const boardUrl = `https://${url.host}/jobs/${encodeURIComponent(parsed.portal)}`;
-    ctx.onProgress?.(`Fetching Zoho board "${parsed.portal}"`);
+    ctx.onProgress?.("Fetching Zoho posting");
+    let response = await politeFetch(url.toString(), { signal: ctx.signal });
+    let job = response.ok ? findJob(response.body, parsed.jobId) : null;
 
-    const response = await politeFetch(boardUrl, { signal: ctx.signal });
-    if (!response.ok) return null;
-
-    const jobs = extractJobs(response.body);
-    const job = jobs.find((entry) => String(entry.id) === parsed.jobId);
+    // Portals that still serve an SPA shell on detail URLs only carry the array
+    // on the board page.
+    if (!job?.Job_Description) {
+      ctx.onProgress?.(`Fetching Zoho board "${parsed.portal}"`);
+      response = await politeFetch(`https://${url.host}/jobs/${encodeURIComponent(parsed.portal)}`, {
+        signal: ctx.signal,
+      });
+      job = response.ok ? findJob(response.body, parsed.jobId) : null;
+    }
     if (!job?.Job_Description) return null;
 
     const text = normalizeWhitespace(htmlToText(job.Job_Description));
@@ -55,10 +63,17 @@ export const zohoAdapter: Adapter = {
       location: formatLocation(job),
       employmentType: job.Job_Type && job.Job_Type !== "Any" ? job.Job_Type : undefined,
       applyUrl: url.toString(),
-      method: "zoho-board",
+      method: "zoho-job-blob",
     } satisfies JdSource;
   },
 };
+
+function findJob(html: string, jobId: string): ZohoJob | null {
+  const jobs = extractJobs(html);
+  const byId = jobs.find((entry) => String(entry.id) === jobId);
+  // A detail page carries the one posting it is about, and not always its id.
+  return byId ?? (jobs.length === 1 ? jobs[0] : null);
+}
 
 function parseZohoPath(url: URL): { portal: string; jobId: string } | null {
   const segments = url.pathname.split("/").filter(Boolean);
@@ -73,15 +88,20 @@ function parseZohoPath(url: URL): { portal: string; jobId: string } | null {
 
 function extractJobs(html: string): ZohoJob[] {
   const $ = cheerio.load(html);
-  const value = $("#jobs").attr("value");
-  if (!value) return [];
+  const candidates = [$("#jobs").attr("value"), ...collectJsonParseLiterals(html)];
 
-  try {
-    const parsed = JSON.parse(value) as unknown;
-    return Array.isArray(parsed) ? (parsed as ZohoJob[]) : [];
-  } catch {
-    return [];
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    try {
+      const parsed = JSON.parse(candidate) as unknown;
+      if (Array.isArray(parsed) && parsed.some((entry) => entry && typeof entry === "object")) {
+        return parsed as ZohoJob[];
+      }
+    } catch {
+      // Another blob on the page; keep looking.
+    }
   }
+  return [];
 }
 
 function formatLocation(job: ZohoJob): string | undefined {

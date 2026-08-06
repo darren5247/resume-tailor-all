@@ -55,26 +55,49 @@ export function htmlToText(html: string): string {
  * Phrases that separate a real posting from a careers landing page. Without
  * this, a 600 character cookie banner passes a pure length check and the model
  * cheerfully tailors a resume to nothing.
+ *
+ * One entry per concept, with the translations a posting might use, because the
+ * threshold below counts concepts. Postings routinely arrive in the language of
+ * the market they hire for, and an English-only list rejects them wholesale.
  */
 const JD_SIGNALS = [
-  /responsibilit|responsabilidad/i,
-  /requirement|requisito/i,
-  /qualificat|cualificac|perfil buscado/i,
-  /\byears? of experience\b|años de experiencia/i,
-  /\bskills?\b|habilidades|conocimientos/i,
-  /you(?:'| wi)ll\b|what you.{0,5}ll do|lo que har/i,
-  /we(?:'| a)re looking|buscamos|estamos buscando/i,
-  /about (?:the|this) role|sobre el puesto|the role\b/i,
-  /benefits|beneficios|compensation/i,
-  /apply|postul/i,
+  /responsibilit|responsabilidad|obowi[ąa]zk|aufgaben|missions/i,
+  /requirement|requisito|wymagan|anforderungen/i,
+  /qualificat|cualificac|perfil buscado|kwalifikacj/i,
+  /\byears? of experience\b|años de experiencia|lat[a]? doświadczenia|jahre erfahrung/i,
+  /\bskills?\b|habilidades|conocimientos|umiej[ęe]tno[śs]|kenntnisse|compétences/i,
+  /you(?:'| wi)ll\b|what you.{0,5}ll do|lo que har|twoim zadaniem/i,
+  /we(?:'| a)re looking|buscamos|estamos buscando|poszukujemy|szukamy|wir suchen/i,
+  /about (?:the|this) role|sobre el puesto|the role\b|o stanowisku|über die stelle/i,
+  /benefits|beneficios|compensation|oferujemy|wynagrodzenie|wir bieten/i,
+  /apply|postul|aplikuj|bewerb/i,
+];
+
+/**
+ * Boards answer an expired link with an apology wrapped in the same chrome as a
+ * real posting, which clears both the length and the signal bar. Only checked on
+ * short pages, since a live posting can mention that some other role is closed.
+ */
+const DEAD_POSTING = [
+  /can(?:no|')t find the job/i,
+  /job (?:you(?:'re| are) looking for )?(?:is |has )?(?:no longer|been removed|expired)/i,
+  /no longer (?:available|accepting|being accepted|posted)/i,
+  /position (?:has been|is) (?:filled|closed)/i,
+  /page not found|404 (?:error|not found)/i,
+  /you need to enable javascript/i,
+  /ya no (?:est[áa] disponible|se encuentra disponible)/i,
 ];
 
 const MIN_UNTRUSTED_LENGTH = 700;
+const MAX_DEAD_POSTING_LENGTH = 2_000;
 const MIN_SIGNALS = 2;
 
 /** Only applied to the guessy rungs; an ATS API or JSON-LD needs no vetting. */
 export function looksLikeJobDescription(text: string): boolean {
   if (text.length < MIN_UNTRUSTED_LENGTH) return false;
+  if (text.length < MAX_DEAD_POSTING_LENGTH && DEAD_POSTING.some((signal) => signal.test(text))) {
+    return false;
+  }
   return JD_SIGNALS.filter((signal) => signal.test(text)).length >= MIN_SIGNALS;
 }
 
@@ -96,6 +119,55 @@ function looksEscaped(html: string): boolean {
 
 export function decodeEntities(input: string): string {
   return cheerio.load(`<div>${input}</div>`)("div").text();
+}
+
+const JS_ESCAPES: Record<string, string> = {
+  n: "\n",
+  r: "\r",
+  t: "\t",
+  b: "\b",
+  f: "\f",
+  v: "\v",
+  "0": "\0",
+};
+
+/**
+ * Turns the body of a JavaScript string literal back into the text it stands
+ * for. Needed because some servers ship JSON as `JSON.parse('...')` with every
+ * quote written `\x22`, which no JSON parser will touch.
+ */
+export function decodeJsStringLiteral(raw: string): string {
+  return raw.replace(
+    /\\(u\{[0-9a-fA-F]{1,6}\}|u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2}|[\s\S])/g,
+    (_match, sequence: string) => {
+      if (sequence[0] === "x") return String.fromCharCode(parseInt(sequence.slice(1), 16));
+      if (sequence[0] === "u") {
+        const hex = sequence[1] === "{" ? sequence.slice(2, -1) : sequence.slice(1);
+        return String.fromCodePoint(parseInt(hex, 16));
+      }
+      return JS_ESCAPES[sequence] ?? sequence;
+    },
+  );
+}
+
+/** Every `JSON.parse('...')` payload in a script, decoded but not yet parsed. */
+export function collectJsonParseLiterals(script: string): string[] {
+  const literals: string[] = [];
+  const opener = /JSON\.parse\(\s*'/g;
+
+  let match: RegExpExecArray | null;
+  while ((match = opener.exec(script))) {
+    const start = match.index + match[0].length;
+    let index = start;
+    while (index < script.length && script[index] !== "'") {
+      index += script[index] === "\\" ? 2 : 1;
+    }
+    if (index >= script.length) break;
+
+    literals.push(decodeJsStringLiteral(script.slice(start, index)));
+    opener.lastIndex = index + 1;
+  }
+  return literals;
 }
 
 interface JsonLdJob {
@@ -292,16 +364,20 @@ export function extractEmbeddedJsonJob(html: string): JdSource | null {
 
   let best: JdSource | null = null;
 
-  for (const script of scripts) {
-    const start = script.indexOf("{");
-    const end = script.lastIndexOf("}");
-    if (start < 0 || end <= start) continue;
+  const consider = (payload: string) => {
     try {
-      const candidate = extractJobFromUnknownJson(JSON.parse(script.slice(start, end + 1)), "embedded-json");
+      const candidate = extractJobFromUnknownJson(JSON.parse(payload), "embedded-json");
       if (candidate && candidate.text.length > (best?.text.length ?? 0)) best = candidate;
     } catch {
       // Not a clean JSON payload; the readability pass will handle this page.
     }
+  };
+
+  for (const script of scripts) {
+    const start = script.indexOf("{");
+    const end = script.lastIndexOf("}");
+    if (start >= 0 && end > start) consider(script.slice(start, end + 1));
+    for (const literal of collectJsonParseLiterals(script)) consider(literal);
   }
 
   return best;
