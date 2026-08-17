@@ -96,8 +96,13 @@ export const paycomAdapter: Adapter = {
 
 function parseJob(body: string): PaycomJobPosting | null {
   try {
-    const data = JSON.parse(body) as PaycomJobResponse | PaycomJobPosting;
-    return (data && "jobPosting" in data ? data.jobPosting : data) ?? null;
+    const data: unknown = JSON.parse(body);
+    if (!data || typeof data !== "object") return null;
+    if ("jobPosting" in data) {
+      const nested = (data as PaycomJobResponse).jobPosting;
+      return nested ?? null;
+    }
+    return data as PaycomJobPosting;
   } catch {
     return null;
   }
