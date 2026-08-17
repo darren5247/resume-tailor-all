@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import pLimit from "p-limit";
-import { ensureDir, resolveOutputDir } from "../paths";
+import { ensureDir } from "../paths";
 import { loadProfile, profileIsUsable } from "../profile/store";
 import { loadSettings } from "../settings";
 import { inspectUrl } from "../scrape/detect";
@@ -21,7 +21,6 @@ export async function startRun(urls: string[]): Promise<RunState> {
   if (profileProblem) throw new RunSetupError(profileProblem);
   if (urls.length === 0) throw new RunSetupError("Paste at least one job URL.");
 
-  settings.outputDir = resolveOutputDir(settings.outputDir);
   await ensureDir(settings.outputDir);
 
   const batchSize = settings.concurrency;

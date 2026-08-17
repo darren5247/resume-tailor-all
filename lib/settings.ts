@@ -1,4 +1,4 @@
-import { DEFAULT_OUTPUT_DIR, isEphemeralRuntime, resolveOutputDir } from "./paths";
+import { DEFAULT_OUTPUT_DIR } from "./paths";
 import { persistLoadSettings, persistSaveSettings } from "./persist";
 import { SettingsSchema, TEMPLATE_IDS, migrateSettingsInput, type Settings } from "./settings-schema";
 
@@ -40,7 +40,7 @@ export async function loadSettings(): Promise<Settings> {
     settings.baseUrl = process.env.OPENAI_BASE_URL;
   }
   settings.baseUrl = resolveBaseUrl(settings);
-  settings.outputDir = resolveOutputDir(settings.outputDir);
+  if (!settings.outputDir) settings.outputDir = DEFAULT_OUTPUT_DIR;
   if (!settings.googleSheetUrl && (process.env.GOOGLE_SHEET_URL || process.env.GOOGLE_SHEET_ID)) {
     settings.googleSheetUrl = (process.env.GOOGLE_SHEET_URL || process.env.GOOGLE_SHEET_ID || "").trim();
   }
@@ -55,22 +55,11 @@ export async function loadSettings(): Promise<Settings> {
 
 export async function saveSettings(next: Settings): Promise<Settings> {
   const parsed = SettingsSchema.parse(next);
+  if (!parsed.outputDir) parsed.outputDir = DEFAULT_OUTPUT_DIR;
   // Persist the inferred provider URL so Settings shows what will actually be used.
   if (!parsed.baseUrl.trim() && looksLikeOpenRouterKey(parsed.apiKey)) {
     parsed.baseUrl = OPENROUTER_BASE_URL;
   }
-
-  // Vercel cannot create `D:\…\output`. Keep the stored local folder in Postgres
-  // so a later desktop run still writes there; this process uses /tmp instead.
-  if (isEphemeralRuntime()) {
-    const stored = await persistLoadSettings();
-    parsed.outputDir = typeof stored?.outputDir === "string" ? stored.outputDir : "";
-    await persistSaveSettings(parsed);
-    parsed.outputDir = DEFAULT_OUTPUT_DIR;
-    return parsed;
-  }
-
-  parsed.outputDir = resolveOutputDir(parsed.outputDir);
   await persistSaveSettings(parsed);
   return parsed;
 }
@@ -93,6 +82,5 @@ export function redactSettings(settings: Settings) {
     hasGoogleServiceAccount: Boolean(settings.googleServiceAccountJson),
     googleServiceAccountEmail: googleEmail,
     googleServiceAccountFromEnv: !!process.env.GOOGLE_SERVICE_ACCOUNT_JSON,
-    outputDirLocked: isEphemeralRuntime(),
   };
 }
