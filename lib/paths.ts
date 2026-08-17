@@ -13,6 +13,15 @@ function writableRoot(): string {
   return /* turbopackIgnore: true */ process.cwd();
 }
 
+/**
+ * Next/Turbopack file tracing hooks `node:fs`. That wrapper throws ENOENT on
+ * mkdir of gitignored runtime dirs (`output/`, `data/`) even when they exist.
+ * `getBuiltinModule` is the unpatched Node fs.
+ */
+function nodeFs(): typeof import("node:fs/promises") {
+  return process.getBuiltinModule?.("node:fs/promises") ?? fs;
+}
+
 export const ROOT = writableRoot();
 export const DATA_DIR = path.join(ROOT, "data");
 export const RUNS_DIR = path.join(DATA_DIR, "runs");
@@ -25,12 +34,40 @@ export const PROFILES_INDEX_FILE = path.join(PROFILES_DIR, "index.json");
 export const SETTINGS_FILE = path.join(DATA_DIR, "settings.json");
 
 export async function ensureDir(dir: string): Promise<void> {
-  await fs.mkdir(dir, { recursive: true });
+  const target = path.resolve(dir);
+  const io = nodeFs();
+  try {
+    await io.mkdir(/* turbopackIgnore: true */ target, { recursive: true });
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException;
+    if (err.code === "EEXIST") return;
+    // Tracing hooks can report ENOENT for a directory that is already there.
+    try {
+      const stat = await io.stat(/* turbopackIgnore: true */ target);
+      if (stat.isDirectory()) return;
+    } catch {
+      // Keep the original mkdir error.
+    }
+    throw error;
+  }
+}
+
+export async function writeFile(file: string, contents: string | Buffer): Promise<void> {
+  await nodeFs().writeFile(/* turbopackIgnore: true */ file, contents);
+}
+
+export async function pathExists(target: string): Promise<boolean> {
+  try {
+    await nodeFs().access(/* turbopackIgnore: true */ target);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export async function readJson<T>(file: string): Promise<T | null> {
   try {
-    return JSON.parse(await fs.readFile(file, "utf8")) as T;
+    return JSON.parse(await nodeFs().readFile(/* turbopackIgnore: true */ file, "utf8")) as T;
   } catch {
     return null;
   }
@@ -38,7 +75,7 @@ export async function readJson<T>(file: string): Promise<T | null> {
 
 export async function writeJson(file: string, value: unknown): Promise<void> {
   await ensureDir(path.dirname(file));
-  await fs.writeFile(file, JSON.stringify(value, null, 2), "utf8");
+  await writeFile(file, JSON.stringify(value, null, 2));
 }
 
 /** Filesystem-safe slug used for output folder and file names. */
