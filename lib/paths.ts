@@ -2,12 +2,17 @@ import path from "node:path";
 import os from "node:os";
 import fs from "node:fs/promises";
 
+/** Deploy disks are read-only; only os.tmpdir() can hold generated files. */
+export function isEphemeralRuntime(): boolean {
+  return Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+}
+
 /**
  * Local runs write under the project root. On Vercel/Lambda the deploy dir is
  * read-only, so runtime paths must live under the writable temp dir.
  */
 function writableRoot(): string {
-  if (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME) {
+  if (isEphemeralRuntime()) {
     return path.join(os.tmpdir(), "resume-tailor");
   }
   return /* turbopackIgnore: true */ process.cwd();
@@ -26,6 +31,36 @@ export const ROOT = writableRoot();
 export const DATA_DIR = path.join(ROOT, "data");
 export const RUNS_DIR = path.join(DATA_DIR, "runs");
 export const DEFAULT_OUTPUT_DIR = path.join(ROOT, "output");
+
+/**
+ * Settings saved on a Windows PC store `D:\…\output`. That path is loaded from
+ * Postgres on Vercel (Linux) and mkdir fails with ENOENT. Map anything this
+ * host cannot create onto the writable default for this process.
+ */
+export function resolveOutputDir(stored: string | undefined | null): string {
+  const trimmed = stored?.trim() ?? "";
+  if (!trimmed || outputDirIsUnusable(trimmed)) return DEFAULT_OUTPUT_DIR;
+  return trimmed;
+}
+
+function outputDirIsUnusable(dir: string): boolean {
+  if (isEphemeralRuntime()) {
+    const resolved = path.resolve(dir);
+    return resolved !== path.resolve(DEFAULT_OUTPUT_DIR) && !isInside(ROOT, resolved);
+  }
+  if (process.platform !== "win32") {
+    if (/^[A-Za-z]:[\\/]/.test(dir) || dir.startsWith("\\\\")) return true;
+  } else if (dir.startsWith("/tmp") || dir.startsWith("/var/task")) {
+    return true;
+  }
+  return false;
+}
+
+function isInside(root: string, target: string): boolean {
+  const base = path.resolve(root);
+  const resolved = path.resolve(target);
+  return resolved === base || resolved.startsWith(base + path.sep);
+}
 
 /** Legacy single-profile file; migrated into profiles/ on first load. */
 export const PROFILE_FILE = path.join(DATA_DIR, "profile.json");

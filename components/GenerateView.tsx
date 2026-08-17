@@ -243,7 +243,9 @@ export function GenerateView({
           </div>
 
           <p className="mt-4 text-[11px] text-fg-faint">
-            Files are written to {run.outputDir}
+            {run.outputDir.startsWith("/tmp")
+              ? "Download files from each job card. Vercel cannot write to a folder on your computer."
+              : `Files are written to ${run.outputDir}`}
           </p>
         </section>
       )}
