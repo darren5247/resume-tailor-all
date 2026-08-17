@@ -9,6 +9,7 @@ import { inspectUrl } from "../scrape/detect";
 import { createRun, getJobController, getRun, persistNow, resetJobController, update, updateJob } from "./store";
 import { processJob } from "./job";
 import { emptyUsage, initialSteps, type JobState, type RunState } from "./types";
+import { deleteSheetJob, isSheetConfigured } from "../sheets";
 
 export class RunSetupError extends Error {}
 
@@ -165,13 +166,14 @@ export function cancelJob(runId: string, jobId: string): boolean {
   return true;
 }
 
-export async function deleteJob(runId: string, jobId: string): Promise<void> {
+export async function deleteJob(runId: string, jobId: string): Promise<{ sheetWarning?: string }> {
   const record = getRun(runId);
   if (!record) throw new RunSetupError("That run is no longer in memory. Start a new run.");
 
   const job = record.state.jobs.find((entry) => entry.id === jobId);
   if (!job) throw new RunSetupError("Unknown job.");
 
+  const url = job.url;
   getJobController(runId, jobId)?.abort();
   record.jobControllers.delete(jobId);
 
@@ -191,6 +193,15 @@ export async function deleteJob(runId: string, jobId: string): Promise<void> {
     await fsp.rm(folder, { recursive: true, force: true }).catch(() => undefined);
   }
   await persistNow(runId);
+
+  try {
+    if (isSheetConfigured(record.settings)) {
+      await deleteSheetJob(url, record.settings);
+    }
+  } catch (error) {
+    return { sheetWarning: error instanceof Error ? error.message : String(error) };
+  }
+  return {};
 }
 
 function jobOutputFolder(outputDir: string, job: JobState): string | null {

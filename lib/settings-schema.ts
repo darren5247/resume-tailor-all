@@ -78,6 +78,9 @@ export const SettingsSchema = z.object({
   template: z.enum(TEMPLATE_IDS).default("bold-accent"),
   includeCoverLetter: z.boolean().default(true),
   usePlaywrightFallback: z.boolean().default(true),
+  googleSheetUrl: z.string().default(""),
+  googleSheetTab: z.string().default(""),
+  googleServiceAccountJson: z.string().default(""),
 });
 
 export type Settings = z.infer<typeof SettingsSchema>;

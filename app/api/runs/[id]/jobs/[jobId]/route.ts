@@ -7,8 +7,8 @@ export async function DELETE(_request: Request, { params }: { params: Promise<{ 
   const { id, jobId } = await params;
 
   try {
-    await deleteJob(id, jobId);
-    return NextResponse.json({ ok: true });
+    const result = await deleteJob(id, jobId);
+    return NextResponse.json({ ok: true, ...result });
   } catch (error) {
     const status = error instanceof RunSetupError ? 400 : 500;
     return NextResponse.json({ error: error instanceof Error ? error.message : String(error) }, { status });

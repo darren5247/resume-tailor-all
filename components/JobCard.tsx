@@ -47,7 +47,15 @@ const WORKPLACE_ALERT: Record<
   },
 };
 
-export function JobCard({ job, runId, onChanged }: { job: JobState; runId: string; onChanged: () => void }) {
+export function JobCard({
+  job,
+  runId,
+  onChanged,
+}: {
+  job: JobState;
+  runId: string;
+  onChanged: (info?: { sheetWarning?: string }) => void;
+}) {
   const [pasted, setPasted] = useState("");
   const [busy, setBusy] = useState<"retry" | "paste" | "cancel" | "delete" | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -115,7 +123,8 @@ export function JobCard({ job, runId, onChanged }: { job: JobState; runId: strin
         const data = (await response.json().catch(() => ({}))) as { error?: string };
         setActionError(data.error ?? "Could not delete.");
       } else {
-        onChanged();
+        const data = (await response.json().catch(() => ({}))) as { sheetWarning?: string };
+        onChanged(data.sheetWarning ? { sheetWarning: data.sheetWarning } : undefined);
       }
     } catch (error) {
       setActionError(error instanceof Error ? error.message : String(error));
@@ -267,6 +276,14 @@ export function JobCard({ job, runId, onChanged }: { job: JobState; runId: strin
           )}
 
           {actionError && <div className="mt-2 text-xs text-danger">{actionError}</div>}
+
+          {job.warnings
+            .filter((warning) => warning.startsWith("Google Sheet:"))
+            .map((warning) => (
+              <div key={warning} className="mt-2 text-xs text-warn">
+                {warning}
+              </div>
+            ))}
 
           {done && job.downloads.length > 0 && (
             <div className="mt-3">

@@ -10,16 +10,20 @@ export function GenerateView({
   readyMessage,
   profileLabel,
   templateName,
+  sheetsConfigured,
 }: {
   ready: boolean;
   readyMessage: string;
   profileLabel: string;
   templateName: string;
+  sheetsConfigured: boolean;
 }) {
   const [urlsText, setUrlsText] = useState("");
   const [run, setRun] = useState<RunState | null>(null);
   const [starting, setStarting] = useState(false);
+  const [loadingSheet, setLoadingSheet] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [sheetNotice, setSheetNotice] = useState<string | null>(null);
   const [invalid, setInvalid] = useState<string[]>([]);
   const sourceRef = useRef<EventSource | null>(null);
 
@@ -86,6 +90,46 @@ export function GenerateView({
     await fetch(`/api/runs/${run.id}/cancel`, { method: "POST" });
   };
 
+  const loadFromSheet = async () => {
+    setLoadingSheet(true);
+    setError(null);
+    setSheetNotice(null);
+    try {
+      const response = await fetch("/api/sheets/urls");
+      const data = (await response.json()) as { urls?: string[]; error?: string };
+      if (!response.ok || !data.urls) {
+        setError(data.error ?? "Could not read the Google Sheet.");
+        return;
+      }
+      if (data.urls.length === 0) {
+        setSheetNotice("The spreadsheet has no job URLs yet.");
+        return;
+      }
+      setUrlsText((current) => {
+        const existing = new Set(
+          current
+            .split(/[\r\n]+/)
+            .map((line) => line.trim())
+            .filter(Boolean),
+        );
+        const added: string[] = [];
+        for (const url of data.urls ?? []) {
+          if (existing.has(url)) continue;
+          existing.add(url);
+          added.push(url);
+        }
+        if (added.length === 0) return current;
+        const prefix = current.trim() ? `${current.trimEnd()}\n` : "";
+        return `${prefix}${added.join("\n")}`;
+      });
+      setSheetNotice(`Loaded ${data.urls.length} URL(s) from Google Sheet.`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setLoadingSheet(false);
+    }
+  };
+
   const batchLabel = run
     ? `running batch ${run.currentBatch}/${run.batchCount} · jobs ${
         (run.currentBatch - 1) * run.batchSize + 1
@@ -103,6 +147,9 @@ export function GenerateView({
               <span className="text-accent">{profileLabel}</span>
               {" · "}
               template <span className="text-accent">{templateName}</span>.
+              {sheetsConfigured
+                ? " Badges and resume folder names write to your Google Sheet; deleting a job removes that URL row."
+                : ""}
             </p>
           </div>
           <span className="text-xs text-accent">{linkCount} links</span>
@@ -125,6 +172,12 @@ export function GenerateView({
             {starting ? "Starting..." : running ? "Processing..." : "Generate resumes"}
           </button>
 
+          {sheetsConfigured && (
+            <button className="btn" disabled={starting || running || loadingSheet} onClick={() => void loadFromSheet()}>
+              {loadingSheet ? "Loading sheet..." : "Load from Google Sheet"}
+            </button>
+          )}
+
           {running && (
             <>
               <span className="text-xs text-fg-muted">{batchLabel}</span>
@@ -138,6 +191,7 @@ export function GenerateView({
         </div>
 
         {error && <div className="mt-3 text-xs text-danger">{error}</div>}
+        {sheetNotice && <div className="mt-3 text-xs text-accent">{sheetNotice}</div>}
 
         {invalid.length > 0 && (
           <div className="mt-3 text-xs text-warn">
@@ -174,7 +228,17 @@ export function GenerateView({
 
           <div className="flex flex-col gap-3">
             {run.jobs.map((job) => (
-              <JobCard key={job.id} job={job} runId={run.id} onChanged={() => void refresh()} />
+              <JobCard
+                key={job.id}
+                job={job}
+                runId={run.id}
+                onChanged={(info) => {
+                  void refresh();
+                  if (info?.sheetWarning) {
+                    setSheetNotice(`Deleted locally, but the Google Sheet row stayed: ${info.sheetWarning}`);
+                  }
+                }}
+              />
             ))}
           </div>
 

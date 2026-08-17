@@ -3,14 +3,21 @@
 import { useState } from "react";
 import { TEMPLATES, type Settings } from "@/lib/settings-schema";
 
-type RedactedSettings = Settings & { hasApiKey: boolean; apiKeyFromEnv: boolean };
+type RedactedSettings = Settings & {
+  hasApiKey: boolean;
+  apiKeyFromEnv: boolean;
+  hasGoogleServiceAccount: boolean;
+  googleServiceAccountEmail: string;
+  googleServiceAccountFromEnv: boolean;
+};
 
 export function SettingsForm({ initial }: { initial: RedactedSettings }) {
   const [form, setForm] = useState<RedactedSettings>(initial);
   const [apiKeyInput, setApiKeyInput] = useState("");
+  const [serviceAccountInput, setServiceAccountInput] = useState("");
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState<"save" | "test" | null>(null);
+  const [busy, setBusy] = useState<"save" | "test" | "sheets" | null>(null);
 
   const set = <K extends keyof RedactedSettings>(key: K, value: RedactedSettings[K]) =>
     setForm((current) => ({ ...current, [key]: value }));
@@ -23,7 +30,11 @@ export function SettingsForm({ initial }: { initial: RedactedSettings }) {
       const response = await fetch("/api/settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...form, apiKey: apiKeyInput }),
+        body: JSON.stringify({
+          ...form,
+          apiKey: apiKeyInput,
+          googleServiceAccountJson: serviceAccountInput,
+        }),
       });
       const data = (await response.json()) as RedactedSettings & { error?: string };
       if (!response.ok) {
@@ -32,6 +43,7 @@ export function SettingsForm({ initial }: { initial: RedactedSettings }) {
       }
       setForm(data);
       setApiKeyInput("");
+      setServiceAccountInput("");
       setStatus("Saved.");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Could not save.");
@@ -61,6 +73,33 @@ export function SettingsForm({ initial }: { initial: RedactedSettings }) {
       } else {
         setError(data.error ?? "Connection failed.");
       }
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const testSheets = async () => {
+    setBusy("sheets");
+    setError(null);
+    setStatus(null);
+    try {
+      const response = await fetch("/api/settings/sheets-test", { method: "POST" });
+      const data = (await response.json()) as {
+        ok?: boolean;
+        tab?: string;
+        email?: string;
+        rows?: number;
+        error?: string;
+      };
+      if (data.ok) {
+        setStatus(
+          `Opened "${data.tab}" as ${data.email}. ${data.rows ?? 0} job row(s).`,
+        );
+      } else {
+        setError(data.error ?? "Could not reach the spreadsheet.");
+      }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not reach the spreadsheet.");
     } finally {
       setBusy(null);
     }
@@ -164,6 +203,65 @@ export function SettingsForm({ initial }: { initial: RedactedSettings }) {
             hint="The last scraping fallback. Needs: npx playwright install chromium"
           />
         </div>
+      </section>
+
+      <section className="panel p-5 md:col-span-2">
+        <h2 className="text-base text-fg">Google Sheet</h2>
+        <p className="mt-0.5 text-xs text-fg-muted">
+          When a Direct hire, Agency, Startup, Hybrid, or On-site badge appears on a job card, it is written
+          to the Badges column. After documents are written, the resume folder name goes in Folder. Missing
+          headers are added; scattered labels are pulled into those columns. Deleting a job here deletes that
+          URL&apos;s row. Share the spreadsheet with the service account as Editor.
+        </p>
+
+        <div className="mt-4 grid gap-3 md:grid-cols-2">
+          <Field
+            label="Spreadsheet URL"
+            hint="Paste the full docs.google.com/spreadsheets link, or just the spreadsheet id."
+          >
+            <input
+              className="field"
+              value={form.googleSheetUrl}
+              onChange={(event) => set("googleSheetUrl", event.target.value)}
+              placeholder="https://docs.google.com/spreadsheets/d/..."
+            />
+          </Field>
+
+          <Field label="Tab name" hint="Leave blank to use the first tab, or the gid in the URL.">
+            <input
+              className="field"
+              value={form.googleSheetTab}
+              onChange={(event) => set("googleSheetTab", event.target.value)}
+              placeholder="Sheet1"
+            />
+          </Field>
+
+          <div className="md:col-span-2">
+            <Field
+              label="Service account JSON"
+              hint={
+                form.hasGoogleServiceAccount
+                  ? `Saved as ${form.googleServiceAccountEmail || "a service account"}${
+                      form.googleServiceAccountFromEnv ? " (from environment)" : ""
+                    }. Paste a new JSON key to replace it.`
+                  : "Google Cloud → IAM → Service accounts → Keys → JSON. Enable the Google Sheets API on that project."
+              }
+            >
+              <textarea
+                className="field h-28 font-mono text-xs"
+                placeholder='{"type":"service_account","client_email":"...@....iam.gserviceaccount.com","private_key":"-----BEGIN PRIVATE KEY-----\\n..."}'
+                value={serviceAccountInput}
+                onChange={(event) => setServiceAccountInput(event.target.value)}
+                spellCheck={false}
+                autoComplete="off"
+              />
+            </Field>
+          </div>
+        </div>
+
+        <button className="btn mt-3" disabled={busy !== null} onClick={() => void testSheets()}>
+          {busy === "sheets" ? "Testing..." : "Test spreadsheet"}
+        </button>
       </section>
 
       <section className="panel p-5 md:col-span-2">

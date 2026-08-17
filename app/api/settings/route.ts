@@ -26,6 +26,9 @@ export async function POST(request: Request) {
     if (typeof body.apiKey !== "string" || body.apiKey.trim() === "") {
       merged.apiKey = current.apiKey;
     }
+    if (typeof body.googleServiceAccountJson !== "string" || body.googleServiceAccountJson.trim() === "") {
+      merged.googleServiceAccountJson = current.googleServiceAccountJson;
+    }
 
     const parsed = SettingsSchema.safeParse(merged);
     if (!parsed.success) {

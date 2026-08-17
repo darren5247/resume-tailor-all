@@ -25,6 +25,20 @@ Vercel functions cannot keep `data/profiles/` or `data/settings.json`. Add Neon 
 
 Local JSON under `data/` is gitignored, so a deploy never copies the profile you saved on your laptop. Point local `.env.local` at the same `DATABASE_URL` if you want one shared copy of that data.
 
+## Google Sheet
+
+Connect a spreadsheet on the Settings tab so job-card badges stay in sync with your tracker.
+
+1. In Google Cloud, create a service account, enable the **Google Sheets API**, and download a JSON key.
+2. Share the spreadsheet with that service account email as **Editor**.
+3. Paste the spreadsheet URL and the JSON key into Settings, then **Test spreadsheet**.
+
+The first row is `URL`, `Company`, `Role`, `Badges`, `Folder`. If that header is missing, it is inserted. Direct hire / Agency (and other badges) always go in **Badges**; the dated resume folder name always goes in **Folder**. Labels that landed in the wrong column are moved back on the next sync or when you click **Test spreadsheet**.
+
+When extract shows **Direct hire**, **Agency**, **Startup**, **Hybrid**, or **On-site** on a card, those labels are written to the matching URL row. After the zip step, the folder name (for example `2026-08-17_acme_senior-data-engineer`) is written to **Folder**. If the URL is not in the sheet yet and a badge fired or a packet was written, a row is appended. Deleting a job on the site deletes that URL's row. **Load from Google Sheet** on the Generate tab pulls URLs into the box.
+
+You can also set `GOOGLE_SHEET_URL`, `GOOGLE_SHEET_TAB`, and `GOOGLE_SERVICE_ACCOUNT_JSON` in `.env.local` instead of the form.
+
 ## Profiles
 
 The header **Profile** dropdown switches between saved people (Diego, Jomar, …). **New...** creates a blank profile, **Delete** removes the selected one, and **Save** persists the Profile tab form for the active person. Generate always uses whichever profile is selected in that dropdown.
@@ -123,6 +137,7 @@ lib/
   docx/       resume and cover letter renderers, packaging
   pipeline/   run store, batching, the six-step state machine
   score/      ATS scoring
+  sheets/     Google Sheets tracker (badge labels, resume folder name, URL delete)
 scripts/      the scrape harness
 data/         local profile, settings and run history when Postgres is not configured (gitignored)
 output/       generated packets (gitignored)

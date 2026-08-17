@@ -1,6 +1,7 @@
 import { GenerateView } from "@/components/GenerateView";
 import { listProfiles, profileIsUsable } from "@/lib/profile/store";
 import { loadSettings, TEMPLATES } from "@/lib/settings";
+import { isSheetConfigured } from "@/lib/sheets";
 
 export const dynamic = "force-dynamic";
 
@@ -20,6 +21,7 @@ export default async function GeneratePage() {
       readyMessage={problem ?? ""}
       profileLabel={label}
       templateName={templateName}
+      sheetsConfigured={isSheetConfigured(settings)}
     />
   );
 }

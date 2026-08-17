@@ -16,6 +16,7 @@ import { inspectUrl } from "../scrape/detect";
 import { fetchJobDescription, finalize } from "../scrape/fetchJd";
 import { ScrapeError, type JdSource } from "../scrape/types";
 import { scoreResume } from "../score/ats";
+import { deleteSheetJob, isSheetConfigured, upsertSheetJob } from "../sheets";
 import { checkSalaryEligibility, workplaceAlert } from "./eligibility";
 import { resolveFolderIdentity } from "./naming";
 import { getJobController, getRun, update, updateJob } from "./store";
@@ -160,6 +161,7 @@ export async function processJob(runId: string, jobId: string, pastedJd?: string
       .filter(Boolean)
       .join(" · ") || identity.title;
     setStep("extract", "done", channelNote);
+    void syncJobToSheet(runId, jobId);
 
     throwIfAborted(signal);
     const colombia = profile.country === "Colombia";
@@ -279,8 +281,7 @@ export async function processJob(runId: string, jobId: string, pastedJd?: string
         unresolvedViolations: report.violations,
         detectedRole: detectedRole ?? null,
         usage: llm.usage,
-        // Reserved for the Notion tracker sync.
-        tracker: { synced: false },
+        sheetConfigured: isSheetConfigured(settings),
       },
     });
 
@@ -307,6 +308,7 @@ export async function processJob(runId: string, jobId: string, pastedJd?: string
     update(runId, (state) => {
       state.usage = mergeUsage(state.usage, llm.usage);
     });
+    void syncJobToSheet(runId, jobId, path.basename(packet.folder));
   } catch (error) {
     update(runId, (state) => {
       state.usage = mergeUsage(state.usage, llm.usage);
@@ -333,6 +335,37 @@ function fail(runId: string, jobId: string, step: StepId, error: unknown, attemp
 
 function jobStillPresent(runId: string, jobId: string): boolean {
   return Boolean(getRun(runId)?.state.jobs.some((entry) => entry.id === jobId));
+}
+
+async function syncJobToSheet(runId: string, jobId: string, folder?: string): Promise<void> {
+  const record = getRun(runId);
+  const job = record?.state.jobs.find((entry) => entry.id === jobId);
+  if (!record || !job || !isSheetConfigured(record.settings)) return;
+  const url = job.url;
+  try {
+    await upsertSheetJob(
+      {
+        url,
+        company: job.company,
+        role: job.role,
+        badges: job,
+        folder,
+      },
+      record.settings,
+    );
+  } catch (error) {
+    if (!jobStillPresent(runId, jobId)) return;
+    const message = error instanceof Error ? error.message : String(error);
+    updateJob(runId, jobId, (state) => {
+      if (!state.warnings.includes(`Google Sheet: ${message}`)) {
+        state.warnings.push(`Google Sheet: ${message}`);
+      }
+    });
+    return;
+  }
+  if (!jobStillPresent(runId, jobId)) {
+    await deleteSheetJob(url, record.settings).catch(() => undefined);
+  }
 }
 
 function throwIfAborted(signal: AbortSignal): void {

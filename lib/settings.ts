@@ -41,6 +41,15 @@ export async function loadSettings(): Promise<Settings> {
   }
   settings.baseUrl = resolveBaseUrl(settings);
   if (!settings.outputDir) settings.outputDir = DEFAULT_OUTPUT_DIR;
+  if (!settings.googleSheetUrl && (process.env.GOOGLE_SHEET_URL || process.env.GOOGLE_SHEET_ID)) {
+    settings.googleSheetUrl = (process.env.GOOGLE_SHEET_URL || process.env.GOOGLE_SHEET_ID || "").trim();
+  }
+  if (!settings.googleSheetTab && process.env.GOOGLE_SHEET_TAB) {
+    settings.googleSheetTab = process.env.GOOGLE_SHEET_TAB.trim();
+  }
+  if (!settings.googleServiceAccountJson && process.env.GOOGLE_SERVICE_ACCOUNT_JSON) {
+    settings.googleServiceAccountJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+  }
   return settings;
 }
 
@@ -57,10 +66,21 @@ export async function saveSettings(next: Settings): Promise<Settings> {
 
 /** Never ship the raw key to the browser; the UI only needs to know one exists. */
 export function redactSettings(settings: Settings) {
+  let googleEmail = "";
+  try {
+    const parsed = JSON.parse(settings.googleServiceAccountJson) as { client_email?: unknown };
+    if (typeof parsed.client_email === "string") googleEmail = parsed.client_email;
+  } catch {
+    googleEmail = "";
+  }
   return {
     ...settings,
     apiKey: settings.apiKey ? `sk-...${settings.apiKey.slice(-4)}` : "",
     hasApiKey: Boolean(settings.apiKey),
     apiKeyFromEnv: !!process.env.OPENAI_API_KEY,
+    googleServiceAccountJson: "",
+    hasGoogleServiceAccount: Boolean(settings.googleServiceAccountJson),
+    googleServiceAccountEmail: googleEmail,
+    googleServiceAccountFromEnv: !!process.env.GOOGLE_SERVICE_ACCOUNT_JSON,
   };
 }
