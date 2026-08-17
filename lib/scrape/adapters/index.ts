@@ -15,11 +15,13 @@ import { jobviteAdapter } from "./jobvite";
 import { joinAdapter } from "./join";
 import { leverAdapter } from "./lever";
 import { oracleCloudAdapter } from "./oraclecloud";
+import { paycomAdapter } from "./paycom";
 import { personioAdapter } from "./personio";
 import { pinpointAdapter } from "./pinpoint";
 import { recruiteeAdapter } from "./recruitee";
 import { ripplingAdapter } from "./rippling";
 import { smartRecruitersAdapter } from "./smartrecruiters";
+import { successFactorsAdapter } from "./successfactors";
 import { teamtailorAdapter } from "./teamtailor";
 import { ultiproAdapter } from "./ultipro";
 import { workableAdapter } from "./workable";
@@ -53,6 +55,8 @@ export const ADAPTERS: Adapter[] = [
   zohoAdapter,
   adpAdapter,
   jobdivaAdapter,
+  paycomAdapter,
+  successFactorsAdapter,
 ];
 
 export function detectAdapter(url: URL): Adapter | null {

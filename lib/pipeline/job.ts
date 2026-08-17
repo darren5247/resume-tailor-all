@@ -2,6 +2,7 @@ import path from "node:path";
 import { LlmClient, mergeUsage } from "../llm/client";
 import { assembleResume } from "../llm/assemble";
 import { extractJobSpec } from "../llm/extractJob";
+import { classifyCompanySignals } from "../llm/companySignals";
 import { generateCoverLetter, generateResumeDraft } from "../llm/generate";
 import { repairInstruction, validateDraft, type ValidationReport } from "../llm/validate";
 import type { CoverLetter, JobSpec, ResumeDoc } from "../llm/schemas";
@@ -15,8 +16,9 @@ import { inspectUrl } from "../scrape/detect";
 import { fetchJobDescription, finalize } from "../scrape/fetchJd";
 import { ScrapeError, type JdSource } from "../scrape/types";
 import { scoreResume } from "../score/ats";
-import { checkSalaryEligibility, colombiaWorkplaceAlert } from "./eligibility";
-import { getRun, update, updateJob } from "./store";
+import { checkSalaryEligibility, workplaceAlert } from "./eligibility";
+import { resolveFolderIdentity } from "./naming";
+import { getJobController, getRun, update, updateJob } from "./store";
 import { initialSteps, type DownloadRef, type StepId } from "./types";
 
 /**
@@ -28,9 +30,11 @@ export async function processJob(runId: string, jobId: string, pastedJd?: string
   if (!record) return;
 
   const { settings, profile, controller } = record;
-  const signal = controller.signal;
   const job = record.state.jobs.find((entry) => entry.id === jobId);
-  if (!job) return;
+  if (!job || job.status === "cancelled") return;
+
+  const jobAbort = getJobController(runId, jobId);
+  const signal = combineSignals(controller.signal, jobAbort?.signal);
 
   const url = job.url;
   let current: StepId = "scrape";
@@ -48,12 +52,21 @@ export async function processJob(runId: string, jobId: string, pastedJd?: string
     });
 
   updateJob(runId, jobId, (state) => {
+    if (state.status === "cancelled") return;
     state.status = "running";
     state.startedAt = Date.now();
     state.finishedAt = null;
     state.error = null;
     state.attempts = [];
     state.canPaste = false;
+    state.hiringChannel = "unknown";
+    state.clientCompany = "";
+    state.isStartup = false;
+    state.workplaceType = "unspecified";
+    state.salaryExpectation = "";
+    state.salaryMin = null;
+    state.salaryMax = null;
+    state.salaryCurrency = "";
     state.warnings = [];
     state.violations = [];
     state.downloads = [];
@@ -61,14 +74,19 @@ export async function processJob(runId: string, jobId: string, pastedJd?: string
     state.note = pastedJd ? "Using pasted job description..." : "Starting...";
   });
 
+  if (!jobStillPresent(runId, jobId)) return;
+  if (getRun(runId)?.state.jobs.find((entry) => entry.id === jobId)?.status === "cancelled") return;
+
   let llm: LlmClient;
   try {
+    throwIfAborted(signal);
     llm = new LlmClient(settings);
   } catch (error) {
     return fail(runId, jobId, current, error, []);
   }
 
   try {
+    throwIfAborted(signal);
     let source: JdSource;
 
     if (pastedJd) {
@@ -93,19 +111,63 @@ export async function processJob(runId: string, jobId: string, pastedJd?: string
     throwIfAborted(signal);
     setStep("extract", "active", "Extracting structured JD...");
     const spec: JobSpec = await extractJobSpec(llm, source, url, signal);
-    updateJob(runId, jobId, (state) => {
-      state.company = spec.company || state.company;
-      state.role = spec.title || state.role;
+    const identity = resolveFolderIdentity({
+      url,
+      source,
+      spec,
+      fallbackLabel: job.label,
     });
-    setStep("extract", "done", `${spec.title || "Role"} at ${spec.company || "company"}`);
+    // Keep JobSpec truthful to the posting for resume generation; use the
+    // reconciled identity for UI labels and the dated output folder name.
+    if (
+      identity.company &&
+      identity.company !== "company" &&
+      (!spec.company.trim() || /^[a-z0-9_-]+$/.test(spec.company.trim()))
+    ) {
+      spec.company = identity.company;
+    }
+    const signals = classifyCompanySignals({
+      text: source.text,
+      company: spec.company || identity.company,
+      url,
+      llmClientCompany: spec.clientCompany,
+    });
+    spec.hiringChannel = signals.hiringChannel;
+    spec.clientCompany = signals.clientCompany;
+    spec.isStartup = signals.isStartup;
+    updateJob(runId, jobId, (state) => {
+      state.company = identity.company || state.company;
+      state.role = identity.role || state.role;
+      state.hiringChannel = spec.hiringChannel;
+      state.clientCompany = spec.hiringChannel === "agency" ? spec.clientCompany : "";
+      state.isStartup = spec.isStartup;
+      state.workplaceType = spec.workplaceType;
+      state.salaryExpectation = spec.salaryExpectation.trim();
+      state.salaryMin = spec.salaryMin;
+      state.salaryMax = spec.salaryMax;
+      state.salaryCurrency = spec.salaryCurrency.trim().toUpperCase();
+    });
+    const channelNote = [
+      spec.hiringChannel === "agency"
+        ? spec.clientCompany
+          ? `Agency · client: ${spec.clientCompany}`
+          : "Agency posting"
+        : spec.hiringChannel === "direct"
+          ? "Direct hire"
+          : "",
+      spec.isStartup ? "Startup" : "",
+    ]
+      .filter(Boolean)
+      .join(" · ") || identity.title;
+    setStep("extract", "done", channelNote);
 
     throwIfAborted(signal);
     const colombia = profile.country === "Colombia";
     setStep("generate", "active", "Checking salary / eligibility...");
     const salaryEligibility = checkSalaryEligibility(spec);
     if (!salaryEligibility.ok) throw new Error(salaryEligibility.reason);
-    const workplaceAlert = colombia ? colombiaWorkplaceAlert(spec) : null;
-    if (workplaceAlert) note(workplaceAlert);
+    const officeAlert = workplaceAlert(spec);
+    if (officeAlert) note(officeAlert);
 
     const detectedRole = colombia ? null : detectTargetRole(profile, spec);
     setStep(
@@ -127,8 +189,11 @@ export async function processJob(runId: string, jobId: string, pastedJd?: string
     throwIfAborted(signal);
     setStep("validate", "active", colombia ? "Assembling resume..." : "Fact-checking against your profile...");
     let report: ValidationReport = colombia
-      ? { violations: [], warnings: workplaceAlert ? [workplaceAlert] : [] }
+      ? { violations: [], warnings: officeAlert ? [officeAlert] : [] }
       : validateDraft(profile, spec, draft);
+    if (officeAlert && !colombia) {
+      report = { ...report, warnings: [officeAlert, ...report.warnings] };
+    }
 
     // One repair round-trip (US only). Colombia follows the resume prompt alone —
     // no validation rewrite that injects extra instructions.
@@ -159,12 +224,15 @@ export async function processJob(runId: string, jobId: string, pastedJd?: string
     setStep("validate", "done", `ATS ${score.total}/100`);
 
     throwIfAborted(signal);
+    if (!jobStillPresent(runId, jobId)) return;
     let letter: CoverLetter | null = null;
     if (settings.includeCoverLetter) {
       note("Writing cover letter...");
       letter = await generateCoverLetter(llm, profile, spec, draft, settings, signal);
     }
 
+    throwIfAborted(signal);
+    if (!jobStillPresent(runId, jobId)) return;
     setStep("zip", "active", "Rendering documents...");
     const [resumeDocx, resumePdf] = await Promise.all([
       renderResumeDocx(resume, settings.template),
@@ -172,10 +240,12 @@ export async function processJob(runId: string, jobId: string, pastedJd?: string
     ]);
     const coverDocx = letter ? await renderCoverLetterDocx(letter, resume, spec, settings.template) : null;
 
+    throwIfAborted(signal);
+    if (!jobStillPresent(runId, jobId)) return;
     const packet = await writePacket({
       outputDir: settings.outputDir,
-      company: spec.company || job.label,
-      role: spec.title || "role",
+      company: identity.company,
+      role: identity.role,
       firstName: firstName(profile),
       resumeDocx,
       resumePdf,
@@ -185,8 +255,17 @@ export async function processJob(runId: string, jobId: string, pastedJd?: string
       metadata: {
         url,
         scrapedVia: source.method,
-        company: spec.company,
-        role: spec.title,
+        company: identity.company,
+        role: identity.role,
+        hiringChannel: spec.hiringChannel,
+        clientCompany: spec.clientCompany,
+        isStartup: spec.isStartup,
+        workplaceType: spec.workplaceType,
+        salaryExpectation: spec.salaryExpectation,
+        salaryMin: spec.salaryMin,
+        salaryMax: spec.salaryMax,
+        salaryCurrency: spec.salaryCurrency,
+        folderTitle: identity.title,
         location: spec.location,
         seniority: spec.seniority,
         template: settings.template,
@@ -215,8 +294,10 @@ export async function processJob(runId: string, jobId: string, pastedJd?: string
     }
     downloads.push({ label: path.basename(packet.zip), file: rel(settings.outputDir, packet.zip), kind: "zip" });
 
+    if (!jobStillPresent(runId, jobId)) return;
     setStep("zip", "done");
     updateJob(runId, jobId, (state) => {
+      if (state.status === "cancelled") return;
       state.downloads = downloads;
       state.status = "done";
       state.note = "";
@@ -237,6 +318,7 @@ export async function processJob(runId: string, jobId: string, pastedJd?: string
 function fail(runId: string, jobId: string, step: StepId, error: unknown, attempts: string[]): void {
   const aborted = error instanceof Error && (error.name === "AbortError" || error.message === "cancelled");
   updateJob(runId, jobId, (state) => {
+    if (state.status === "cancelled" || state.status === "done") return;
     state.steps[step] = aborted ? "pending" : "failed";
     state.status = aborted ? "cancelled" : "failed";
     state.error = aborted ? "Cancelled." : error instanceof Error ? error.message : String(error);
@@ -249,8 +331,30 @@ function fail(runId: string, jobId: string, step: StepId, error: unknown, attemp
   });
 }
 
+function jobStillPresent(runId: string, jobId: string): boolean {
+  return Boolean(getRun(runId)?.state.jobs.some((entry) => entry.id === jobId));
+}
+
 function throwIfAborted(signal: AbortSignal): void {
   if (signal.aborted) throw new Error("cancelled");
+}
+
+function combineSignals(...signals: Array<AbortSignal | undefined>): AbortSignal {
+  const live = signals.filter((signal): signal is AbortSignal => Boolean(signal));
+  if (live.length === 0) return new AbortController().signal;
+  if (live.length === 1) return live[0];
+  if (typeof AbortSignal.any === "function") return AbortSignal.any(live);
+
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  for (const signal of live) {
+    if (signal.aborted) {
+      controller.abort();
+      return controller.signal;
+    }
+    signal.addEventListener("abort", abort, { once: true });
+  }
+  return controller.signal;
 }
 
 function rel(outputDir: string, absolute: string): string {

@@ -34,6 +34,7 @@ export function SiteHeader(props: {
   email: string;
   phone: string;
   linkedin: string;
+  persistWarning?: string | null;
 }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -149,6 +150,11 @@ export function SiteHeader(props: {
 
   return (
     <header className="sticky top-0 z-30 -mx-6 flex flex-wrap items-start justify-between gap-6 border-b border-line bg-ink/95 px-6 py-4 backdrop-blur">
+      {props.persistWarning && (
+        <div className="basis-full rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-danger">
+          {props.persistWarning}
+        </div>
+      )}
       <div>
         <h1 className="font-display text-3xl tracking-tight text-accent">Resume Tailor</h1>
         <p className="mt-1 text-xs text-fg-muted">ATS packets from job URLs</p>
@@ -219,7 +225,7 @@ export function SiteHeader(props: {
             )}
           </div>
 
-          <button type="button" className="btn" disabled={busy} onClick={onSave} title="Refresh from disk">
+          <button type="button" className="btn" disabled={busy} onClick={onSave} title="Save the Profile tab">
             Save
           </button>
           <button type="button" className="btn" disabled={busy} onClick={onNew}>

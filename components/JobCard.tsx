@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import { StepChips } from "./StepChips";
+import type { HiringChannel, WorkplaceType } from "@/lib/llm/schemas";
+import { formatSalaryLabel } from "@/lib/pipeline/salary";
 import type { JobState } from "@/lib/pipeline/types";
 
 const STATUS_BADGE: Record<JobState["status"], string> = {
@@ -12,14 +14,57 @@ const STATUS_BADGE: Record<JobState["status"], string> = {
   cancelled: "border-line text-fg-muted",
 };
 
+const HIRING_BADGE: Record<
+  Exclude<HiringChannel, "unknown">,
+  { label: string; className: string }
+> = {
+  direct: {
+    label: "Direct hire",
+    className: "border-accent-dim/50 bg-accent-deep/30 text-accent",
+  },
+  agency: {
+    label: "Agency",
+    className: "border-warn/50 bg-warn/10 text-warn",
+  },
+};
+
+const STARTUP_BADGE = {
+  label: "Startup",
+  className: "border-info/50 bg-info-deep/40 text-info",
+};
+
+const WORKPLACE_ALERT: Record<
+  Extract<WorkplaceType, "hybrid" | "onsite">,
+  { label: string; className: string }
+> = {
+  hybrid: {
+    label: "Hybrid",
+    className: "border-warn/50 bg-warn/10 text-warn",
+  },
+  onsite: {
+    label: "On-site",
+    className: "border-warn/50 bg-warn/10 text-warn",
+  },
+};
+
 export function JobCard({ job, runId, onChanged }: { job: JobState; runId: string; onChanged: () => void }) {
   const [pasted, setPasted] = useState("");
-  const [busy, setBusy] = useState<"retry" | "paste" | null>(null);
+  const [busy, setBusy] = useState<"retry" | "paste" | "cancel" | "delete" | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [showDetail, setShowDetail] = useState(false);
 
   const failed = job.status === "failed";
   const done = job.status === "done";
+  const cancellable = job.status === "queued" || job.status === "running";
+  const hiringBadge =
+    job.hiringChannel === "direct" || job.hiringChannel === "agency"
+      ? HIRING_BADGE[job.hiringChannel]
+      : null;
+  const workplaceBadge =
+    job.workplaceType === "hybrid" || job.workplaceType === "onsite"
+      ? WORKPLACE_ALERT[job.workplaceType]
+      : null;
+  const salaryLabel = formatSalaryLabel(job);
 
   const send = async (kind: "retry" | "paste") => {
     setBusy(kind);
@@ -43,6 +88,42 @@ export function JobCard({ job, runId, onChanged }: { job: JobState; runId: strin
     }
   };
 
+  const cancelJob = async () => {
+    setBusy("cancel");
+    setActionError(null);
+    try {
+      const response = await fetch(`/api/runs/${runId}/jobs/${job.id}/cancel`, { method: "POST" });
+      if (!response.ok) {
+        const data = (await response.json().catch(() => ({}))) as { error?: string };
+        setActionError(data.error ?? "Could not cancel.");
+      } else {
+        onChanged();
+      }
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const deleteJob = async () => {
+    setBusy("delete");
+    setActionError(null);
+    try {
+      const response = await fetch(`/api/runs/${runId}/jobs/${job.id}`, { method: "DELETE" });
+      if (!response.ok) {
+        const data = (await response.json().catch(() => ({}))) as { error?: string };
+        setActionError(data.error ?? "Could not delete.");
+      } else {
+        onChanged();
+      }
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(null);
+    }
+  };
+
   return (
     <div
       className={`rounded-lg border p-4 transition-colors ${
@@ -53,19 +134,65 @@ export function JobCard({ job, runId, onChanged }: { job: JobState; runId: strin
         <span className="mt-0.5 w-6 shrink-0 text-right text-xs text-fg-faint">{job.index + 1}</span>
 
         <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-sm text-fg">{job.company || job.label}</span>
-            <span className={`rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${STATUS_BADGE[job.status]}`}>
-              {job.status}
-            </span>
-            {job.atsScore !== null && (
-              <span className="rounded border border-accent-dim/50 bg-accent-deep/30 px-1.5 py-0.5 text-[10px] text-accent">
-                ATS {job.atsScore}/100
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <span className="text-sm text-fg">{job.company || job.label}</span>
+              <span className={`rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${STATUS_BADGE[job.status]}`}>
+                {job.status}
               </span>
-            )}
+              {hiringBadge && (
+                <span
+                  className={`rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${hiringBadge.className}`}
+                  title={
+                    job.hiringChannel === "agency" && job.clientCompany
+                      ? `Agency posting · client: ${job.clientCompany}`
+                      : hiringBadge.label
+                  }
+                >
+                  {hiringBadge.label}
+                  {job.hiringChannel === "agency" && job.clientCompany ? ` · ${job.clientCompany}` : ""}
+                </span>
+              )}
+              {job.isStartup && (
+                <span
+                  className={`rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${STARTUP_BADGE.className}`}
+                  title="Posting identifies this employer as a startup"
+                >
+                  {STARTUP_BADGE.label}
+                </span>
+              )}
+              {workplaceBadge && (
+                <span
+                  className={`rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${workplaceBadge.className}`}
+                  title={`Job requires ${workplaceBadge.label.toLowerCase()} work`}
+                >
+                  {workplaceBadge.label}
+                </span>
+              )}
+              {job.atsScore !== null && (
+                <span className="rounded border border-accent-dim/50 bg-accent-deep/30 px-1.5 py-0.5 text-[10px] text-accent">
+                  ATS {job.atsScore}/100
+                </span>
+              )}
+            </div>
+            <div className="flex shrink-0 flex-wrap items-center gap-2">
+              {cancellable && (
+                <button className="btn" disabled={busy !== null} onClick={() => void cancelJob()}>
+                  {busy === "cancel" ? "Cancelling..." : "Cancel"}
+                </button>
+              )}
+              <button className="btn btn-danger" disabled={busy !== null} onClick={() => void deleteJob()}>
+                {busy === "delete" ? "Deleting..." : "Delete"}
+              </button>
+            </div>
           </div>
 
           {job.role && <div className="mt-0.5 text-sm text-fg-muted">{job.role}</div>}
+          {salaryLabel && (
+            <div className="mt-0.5 text-xs text-accent" title="Stated compensation from the posting">
+              {salaryLabel}
+            </div>
+          )}
 
           <a
             href={job.url}
@@ -82,6 +209,12 @@ export function JobCard({ job, runId, onChanged }: { job: JobState; runId: strin
           </div>
 
           {job.note && <div className="mt-2 text-xs text-fg-muted">{job.note}</div>}
+
+          {workplaceBadge && (done || failed) && (
+            <div className="mt-2 text-xs text-warn">
+              Job requires {workplaceBadge.label.toLowerCase()} work.
+            </div>
+          )}
 
           {failed && job.error && (
             <div className="mt-3 text-xs leading-relaxed text-danger">{job.error}</div>

@@ -278,13 +278,27 @@ function readLocation(location: unknown): string | undefined {
 const DESCRIPTION_KEYS =
   /^(job)?description(html|plain|text)?$|^content$|^body$|^jobdescription$|^content_html$|^content_text$/i;
 
+/** Session/PII blobs that can sit next to a real posting in an Inertia payload. */
+const SKIP_JSON_KEYS = /^(auth|errors|csrf_token|existingCandidate|candidateToken|shortlist_summary)$/i;
+
+interface JsonJobCandidate {
+  text: string;
+  title?: string;
+  company?: string;
+  location?: string;
+  employmentType?: string;
+}
+
 /**
- * Walk arbitrary JSON (script tags, XHR payloads, __NEXT_DATA__) and keep the
- * longest description-shaped string. Shared by the HTML and Chromium rungs.
+ * Walk arbitrary JSON (script tags, XHR payloads, __NEXT_DATA__, Inertia) and
+ * keep the longest description-shaped string. Shared by the HTML and Chromium rungs.
  */
 export function extractJobFromUnknownJson(value: unknown, method = "embedded-json"): JdSource | null {
-  const best: { current: { text: string; title?: string; company?: string; location?: string } | null } = {
-    current: null,
+  const best: { current: JsonJobCandidate | null } = { current: null };
+
+  const consider = (candidate: JsonJobCandidate | null) => {
+    if (!candidate || candidate.text.length <= (best.current?.text.length ?? 0)) return;
+    best.current = candidate;
   };
 
   const visit = (node: unknown, depth: number, title?: string) => {
@@ -302,6 +316,8 @@ export function extractJobFromUnknownJson(value: unknown, method = "embedded-jso
           ? record.name
           : title;
 
+    consider(composeSectionedJob(record, localTitle));
+
     // Rippling and a few others nest role/company HTML under description.
     if (record.description && typeof record.description === "object" && !Array.isArray(record.description)) {
       const nested = record.description as Record<string, unknown>;
@@ -309,31 +325,31 @@ export function extractJobFromUnknownJson(value: unknown, method = "embedded-jso
         .filter((part): part is string => typeof part === "string" && part.length > 40)
         .map((part) => htmlToText(part));
       const text = normalizeWhitespace(parts.join("\n\n"));
-      if (text.length > (best.current?.text.length ?? 0) && text.length > 600) {
-        best.current = {
+      if (text.length > 600) {
+        consider({
           text,
           title: localTitle,
           company: typeof record.companyName === "string" ? record.companyName : undefined,
-        };
+        });
       }
     }
 
     for (const [key, entry] of Object.entries(record)) {
+      if (SKIP_JSON_KEYS.test(key)) continue;
       if (typeof entry === "string" && DESCRIPTION_KEYS.test(key) && entry.length > 600) {
         const text = htmlToText(entry);
-        if (text.length > (best.current?.text.length ?? 0)) {
-          best.current = {
-            text,
-            title: localTitle,
-            company:
-              typeof record.companyName === "string"
-                ? record.companyName
-                : typeof record.company === "string"
-                  ? record.company
-                  : undefined,
-            location: typeof record.location === "string" ? record.location : undefined,
-          };
-        }
+        consider({
+          text,
+          title: localTitle,
+          company:
+            typeof record.companyName === "string"
+              ? record.companyName
+              : typeof record.company === "string"
+                ? record.company
+                : undefined,
+          location: readJsonLocation(record),
+          employmentType: readJsonEmploymentType(record),
+        });
       } else if (entry && typeof entry === "object") {
         visit(entry, depth + 1, localTitle);
       }
@@ -342,13 +358,95 @@ export function extractJobFromUnknownJson(value: unknown, method = "embedded-jso
 
   visit(value, 0);
   if (!best.current) return null;
+  return { ...best.current, method };
+}
+
+/**
+ * Laravel Inertia career pages (Invisible Geeks Recruiting and similar) put the
+ * posting on `data-page`, not in a script tag the other extractors look at.
+ */
+export function extractInertiaJob(html: string): JdSource | null {
+  const $ = cheerio.load(html);
+  let best: JdSource | null = null;
+
+  for (const element of $("[data-page]").toArray()) {
+    const raw = $(element).attr("data-page");
+    if (!raw || !raw.includes("{")) continue;
+    try {
+      const candidate = extractJobFromUnknownJson(JSON.parse(raw), "inertia");
+      if (candidate && candidate.text.length > (best?.text.length ?? 0)) best = candidate;
+    } catch {
+      // Malformed bootstrap; the other rungs still run.
+    }
+  }
+
+  return best;
+}
+
+/**
+ * CMS-style postings: `{ title, sections: [{ title, content, items }] }`.
+ * Invisible Geeks stores the whole JD this way; a single `content` field would
+ * only capture one heading.
+ */
+function composeSectionedJob(record: Record<string, unknown>, fallbackTitle?: string): JsonJobCandidate | null {
+  const sections = record.sections;
+  if (!Array.isArray(sections) || sections.length < 2) return null;
+
+  const heading =
+    typeof record.title === "string"
+      ? record.title
+      : typeof record.documentTitle === "string"
+        ? record.documentTitle
+        : fallbackTitle;
+
+  const parts: string[] = [];
+  if (heading) parts.push(heading);
+
+  let used = 0;
+  for (const section of sections) {
+    if (!section || typeof section !== "object") continue;
+    const entry = section as Record<string, unknown>;
+    const title = typeof entry.title === "string" ? entry.title.trim() : "";
+    const content = typeof entry.content === "string" ? htmlToText(entry.content).trim() : "";
+    const items = Array.isArray(entry.items)
+      ? entry.items.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+      : [];
+    const body = content || (items.length ? items.map((item) => `- ${item.trim()}`).join("\n") : "");
+    if (!body) continue;
+    used += 1;
+    parts.push(title ? `${title}\n${body}` : body);
+  }
+
+  if (used < 2) return null;
+  const text = normalizeWhitespace(parts.join("\n\n"));
+  if (text.length < 600) return null;
+
   return {
-    text: best.current.text,
-    title: best.current.title,
-    company: best.current.company,
-    location: best.current.location,
-    method,
+    text,
+    title: heading,
+    location: readJsonLocation(record),
+    employmentType: readJsonEmploymentType(record),
   };
+}
+
+function readJsonLocation(record: Record<string, unknown>): string | undefined {
+  if (typeof record.location === "string" && record.location.trim()) return record.location;
+  const position = record.position;
+  if (position && typeof position === "object") {
+    const location = (position as Record<string, unknown>).location;
+    if (typeof location === "string" && location.trim()) return location;
+  }
+  return undefined;
+}
+
+function readJsonEmploymentType(record: Record<string, unknown>): string | undefined {
+  if (typeof record.employmentType === "string") return record.employmentType;
+  const position = record.position;
+  if (position && typeof position === "object") {
+    const contract = (position as Record<string, unknown>).contractType;
+    if (typeof contract === "string") return contract;
+  }
+  return undefined;
 }
 
 /**

@@ -1,4 +1,5 @@
-import { DEFAULT_OUTPUT_DIR, SETTINGS_FILE, readJson, writeJson } from "./paths";
+import { DEFAULT_OUTPUT_DIR } from "./paths";
+import { persistLoadSettings, persistSaveSettings } from "./persist";
 import { SettingsSchema, TEMPLATE_IDS, migrateSettingsInput, type Settings } from "./settings-schema";
 
 export { SettingsSchema, TEMPLATES, TEMPLATE_IDS } from "./settings-schema";
@@ -23,7 +24,7 @@ export function resolveBaseUrl(settings: Pick<Settings, "apiKey" | "baseUrl">): 
 }
 
 export async function loadSettings(): Promise<Settings> {
-  const stored = await readJson<Record<string, unknown>>(SETTINGS_FILE);
+  const stored = await persistLoadSettings();
   // Unknown / removed template ids fall back to the default rather than wiping settings.
   if (stored && typeof stored.template === "string" && !(TEMPLATE_IDS as readonly string[]).includes(stored.template)) {
     delete stored.template;
@@ -50,7 +51,7 @@ export async function saveSettings(next: Settings): Promise<Settings> {
   if (!parsed.baseUrl.trim() && looksLikeOpenRouterKey(parsed.apiKey)) {
     parsed.baseUrl = OPENROUTER_BASE_URL;
   }
-  await writeJson(SETTINGS_FILE, parsed);
+  await persistSaveSettings(parsed);
   return parsed;
 }
 

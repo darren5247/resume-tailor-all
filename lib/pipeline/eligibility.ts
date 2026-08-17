@@ -25,14 +25,14 @@ export function checkSalaryEligibility(job: JobSpec): EligibilityResult {
 }
 
 /**
- * Soft alert for Colombia profiles when a posting is on-site or hybrid.
+ * Soft alert when a posting requires in-office presence.
  * Does not block generation — callers should surface the message as a warning.
  */
-export function colombiaWorkplaceAlert(job: JobSpec): string | null {
+export function workplaceAlert(job: JobSpec): string | null {
   const workplace = job.workplaceType;
   if (workplace === "onsite" || workplace === "hybrid") {
     const label = workplace === "onsite" ? "on-site" : "hybrid";
-    return `Job requires ${label} work (Colombia profiles usually target fully remote roles).`;
+    return `Job requires ${label} work.`;
   }
   return null;
 }

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { SiteHeader } from "@/components/SiteHeader";
 import { listProfiles } from "@/lib/profile/store";
+import { canPersist, missingDatabaseMessage } from "@/lib/persist";
 
 export const metadata: Metadata = {
   title: "Resume Tailor",
@@ -13,6 +14,7 @@ export const dynamic = "force-dynamic";
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
   const snapshot = await listProfiles();
   const profile = snapshot.active;
+  const persistWarning = canPersist() ? null : missingDatabaseMessage();
 
   return (
     <html lang="en">
@@ -28,6 +30,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             email={profile.email}
             phone={profile.phone}
             linkedin={profile.linkedin}
+            persistWarning={persistWarning}
           />
           <main className="mt-8 flex flex-col gap-6 pb-24">{children}</main>
         </div>

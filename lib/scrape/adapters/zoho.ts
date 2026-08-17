@@ -1,6 +1,6 @@
 import * as cheerio from "cheerio";
 import { politeFetch } from "../http";
-import { collectJsonParseLiterals, htmlToText, normalizeWhitespace } from "../html";
+import { collectJsonParseLiterals, decodeJsStringLiteral, htmlToText, normalizeWhitespace } from "../html";
 import type { Adapter, JdSource } from "../types";
 
 interface ZohoJob {
@@ -22,12 +22,19 @@ interface ZohoJob {
  * boards put the same array in a hidden `#jobs` input. Either way the visible
  * body is built client side, so both text extraction and readability come back
  * empty and the blob is the only source.
+ *
+ * Custom hosts (jobs.conkord.com and the like) serve the same page; they are
+ * recognised from the `/jobs/{portal}/{18-digit-id}` URL and Zoho's own
+ * `?source=CareerSite` query flag.
  */
 export const zohoAdapter: Adapter = {
   id: "zoho",
 
   match(url) {
-    return /(^|\.)zohorecruit\.(com|in|eu|com\.au)$/i.test(url.host);
+    if (isZohoRecruitHost(url.host)) return true;
+    if (url.searchParams.get("source") === "CareerSite") return true;
+    const parsed = parseZohoPath(url);
+    return !!parsed && parsed.jobId.length >= 15;
   },
 
   async fetch(url, ctx) {
@@ -54,7 +61,8 @@ export const zohoAdapter: Adapter = {
 
     const company =
       readMeta(response.body, "og:site_name") ??
-      url.host.replace(/^www\./, "").split(".")[0];
+      readCompanyName(response.body) ??
+      companyFromHost(url.host);
 
     return {
       text,
@@ -75,6 +83,10 @@ function findJob(html: string, jobId: string): ZohoJob | null {
   return byId ?? (jobs.length === 1 ? jobs[0] : null);
 }
 
+function isZohoRecruitHost(host: string): boolean {
+  return /(^|\.)zohorecruit\.(com|in|eu|com\.au)$/i.test(host);
+}
+
 function parseZohoPath(url: URL): { portal: string; jobId: string } | null {
   const segments = url.pathname.split("/").filter(Boolean);
   // /jobs/{portal}/{jobId}/{optional-slug}
@@ -90,18 +102,24 @@ function extractJobs(html: string): ZohoJob[] {
   const $ = cheerio.load(html);
   const candidates = [$("#jobs").attr("value"), ...collectJsonParseLiterals(html)];
 
+  let fallback: ZohoJob[] = [];
   for (const candidate of candidates) {
     if (!candidate) continue;
     try {
       const parsed = JSON.parse(candidate) as unknown;
-      if (Array.isArray(parsed) && parsed.some((entry) => entry && typeof entry === "object")) {
-        return parsed as ZohoJob[];
+      if (!Array.isArray(parsed) || !parsed.some((entry) => entry && typeof entry === "object")) {
+        continue;
       }
+      const jobs = parsed as ZohoJob[];
+      if (jobs.some((entry) => entry.Job_Description || entry.Job_Opening_Name || entry.Posting_Title)) {
+        return jobs;
+      }
+      if (!fallback.length) fallback = jobs;
     } catch {
       // Another blob on the page; keep looking.
     }
   }
-  return [];
+  return fallback;
 }
 
 function formatLocation(job: ZohoJob): string | undefined {
@@ -115,4 +133,19 @@ function readMeta(html: string, property: string): string | undefined {
   const $ = cheerio.load(html);
   const content = $(`meta[property="${property}"]`).attr("content")?.trim();
   return content || undefined;
+}
+
+function readCompanyName(html: string): string | undefined {
+  const match = html.match(/"company_name"\s*:\s*"((?:\\.|[^"\\])*)"/);
+  if (!match?.[1]) return undefined;
+  const name = decodeJsStringLiteral(match[1]).trim();
+  return name || undefined;
+}
+
+function companyFromHost(host: string): string {
+  const labels = host.replace(/^www\./, "").split(".");
+  if (labels.length >= 2 && /^(jobs|careers|recruiting|talent)$/i.test(labels[0])) {
+    return labels[1];
+  }
+  return labels[0] ?? host;
 }

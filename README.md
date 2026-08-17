@@ -2,7 +2,7 @@
 
 Paste a list of job URLs. For each one the site scrapes the job description, tailors your resume and a cover letter against it, scores the result for ATS fit, and hands back a `.docx` / `.pdf` pair plus a `.zip` — with live per-step progress and a Download All button.
 
-It runs locally on your machine. Your profile, your API key and every generated document stay on disk.
+It runs locally on your machine. Locally, your profile, API key and generated documents stay on disk. On Vercel they must live in Postgres — the serverless filesystem is wiped between requests, so a Save that only writes a JSON file looks successful and then disappears.
 
 ## Setup
 
@@ -12,11 +12,24 @@ npx playwright install chromium   # optional, see "Chromium fallback" below
 npm run dev
 ```
 
+Copy `.env.example` to `.env.local` if you want local runs to use the same Postgres database as production.
+
+## Deploying to Vercel
+
+Vercel functions cannot keep `data/profiles/` or `data/settings.json`. Add Neon Postgres and the app stores profiles and settings there automatically.
+
+1. In the Vercel dashboard: **Storage → Create Database → Neon Postgres**.
+2. Connect that database to this project. Vercel sets `DATABASE_URL` (and `POSTGRES_URL`) for you.
+3. Redeploy. Tables are created on first request.
+4. Fill in Profile and Settings again on the live site and press **Save**.
+
+Local JSON under `data/` is gitignored, so a deploy never copies the profile you saved on your laptop. Point local `.env.local` at the same `DATABASE_URL` if you want one shared copy of that data.
+
 ## Profiles
 
 The header **Profile** dropdown switches between saved people (Diego, Jomar, …). **New...** creates a blank profile, **Delete** removes the selected one, and **Save** persists the Profile tab form for the active person. Generate always uses whichever profile is selected in that dropdown.
 
-Profiles live under `data/profiles/` — one JSON file per person, plus `index.json` for the list and the active id.
+Profiles are stored in Postgres when `DATABASE_URL` is set (Vercel). Locally, without a database, they still live under `data/profiles/` — one JSON file per person, plus `index.json` for the list and the active id.
 
 ## Templates
 
@@ -39,7 +52,7 @@ Each URL runs through six steps, shown live on its card:
 
 Each rung is more expensive and less reliable than the one above it, so the first usable result wins:
 
-1. **The ATS's own public API.** Greenhouse, Lever, Ashby, Workable, SmartRecruiters, Workday, BambooHR, Recruitee, Comeet, Personio, Breezy, Teamtailor, Pinpoint, JazzHR (applytojob.com), Rippling, Gem, Jobvite, Hireology, JOIN (join.com), Dover (`/feed/v1/boards/{slug}/jobs`), iCIMS (`?in_iframe=1` JSON-LD/HTML), Oracle Cloud HCM (CE requisition details REST), and UKG UltiPro (embedded OpportunityDetail payload) all publish job data as unauthenticated JSON/GraphQL or clean server-rendered HTML. No browser, no CAPTCHA, and the cleanest text available. A `?gh_jid=` or `?ashby_jid=` parameter on a company's own careers domain is recognised too. Custom domains that still publish Teamtailor's `/jobs.json` feed are detected from the `/jobs/{id}` URL shape.
+1. **The ATS's own public API.** Greenhouse, Lever, Ashby, Workable, SmartRecruiters, Workday, BambooHR, Recruitee, Comeet, Personio, Breezy, Teamtailor, Pinpoint, JazzHR (applytojob.com), Rippling, Gem, Jobvite, Hireology, JOIN (join.com), Dover (`/feed/v1/boards/{slug}/jobs`), iCIMS (`?in_iframe=1` JSON-LD/HTML), Oracle Cloud HCM (CE requisition details REST), UKG UltiPro (embedded OpportunityDetail payload), and Zoho Recruit (including custom hosts such as `jobs.conkord.com`) all publish job data as unauthenticated JSON/GraphQL or clean server-rendered HTML. No browser, no CAPTCHA, and the cleanest text available. A `?gh_jid=` or `?ashby_jid=` parameter on a company's own careers domain is recognised too. Custom domains that still publish Teamtailor's `/jobs.json` feed are detected from the `/jobs/{id}` URL shape. Zoho custom career sites are recognised from `/jobs/{portal}/{id}` and `?source=CareerSite`.
 2. **`schema.org/JobPosting` JSON-LD** embedded in the served HTML, which covers a large share of boards nobody has written an adapter for.
 3. **`__NEXT_DATA__`, embedded JSON blobs, then densest-text extraction.** Results from these rungs must also read like a job description, not a careers landing page, or they are rejected — a plausible-looking 600 characters of navigation is worse than an honest failure.
 4. **Chromium**, for pages that ship no server-rendered content. While rendering, JSON XHR/fetch responses are also scanned for description fields.
@@ -111,6 +124,6 @@ lib/
   pipeline/   run store, batching, the six-step state machine
   score/      ATS scoring
 scripts/      the scrape harness
-data/         your profile, settings and run history (gitignored)
+data/         local profile, settings and run history when Postgres is not configured (gitignored)
 output/       generated packets (gitignored)
 ```

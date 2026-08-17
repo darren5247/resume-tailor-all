@@ -1,17 +1,16 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { PROFILE_FILE, readJson, slugify } from "../paths";
 import {
-  PROFILE_FILE,
-  PROFILES_DIR,
-  PROFILES_INDEX_FILE,
-  SETTINGS_FILE,
-  ensureDir,
-  readJson,
-  safeFileName,
-  slugify,
-  writeJson,
-} from "../paths";
+  canPersist,
+  persistDeleteProfile,
+  persistLoadIndex,
+  persistLoadProfile,
+  persistLoadSettings,
+  persistSaveIndex,
+  persistSaveProfile,
+} from "../persist";
 import { Profile, ProfileSchema, emptyProfile, firstName, inferCountryFromLocation, type ProfileCountry, PROFILE_COUNTRIES } from "./schema";
 import { legacyBulletsPerCompany } from "../settings-schema";
 
@@ -32,10 +31,6 @@ export interface ProfilesSnapshot {
   profiles: ProfileMeta[];
 }
 
-function profilePath(id: string): string {
-  return path.join(PROFILES_DIR, `${safeFileName(id)}.json`);
-}
-
 function labelFromProfile(profile: Profile, fallback = "Profile"): string {
   const name = profile.fullName.trim();
   if (!name) return fallback;
@@ -43,15 +38,11 @@ function labelFromProfile(profile: Profile, fallback = "Profile"): string {
 }
 
 async function writeIndex(index: ProfilesIndex): Promise<void> {
-  await writeJson(PROFILES_INDEX_FILE, index);
+  await persistSaveIndex(index);
 }
 
 async function readIndex(): Promise<ProfilesIndex | null> {
-  const stored = await readJson<ProfilesIndex>(PROFILES_INDEX_FILE);
-  if (!stored?.activeId || !Array.isArray(stored.profiles) || stored.profiles.length === 0) {
-    return null;
-  }
-  return stored;
+  return persistLoadIndex();
 }
 
 /** One-time move from the old single profile.json into the multi-profile layout. */
@@ -67,8 +58,7 @@ async function migrateLegacyIfNeeded(): Promise<ProfilesIndex | null> {
     profiles: [{ id, label: labelFromProfile(profile, "Profile 1") }],
   };
 
-  await ensureDir(PROFILES_DIR);
-  await writeJson(profilePath(id), profile);
+  await persistSaveProfile(id, index.profiles[0].label, profile);
   await writeIndex(index);
 
   // Keep the old file as a backup so nothing is silently lost.
@@ -85,6 +75,13 @@ async function migrateLegacyIfNeeded(): Promise<ProfilesIndex | null> {
   return index;
 }
 
+function unsavedIndex(): ProfilesIndex {
+  return {
+    activeId: "unsaved",
+    profiles: [{ id: "unsaved", label: "Profile 1" }],
+  };
+}
+
 async function ensureIndex(): Promise<ProfilesIndex> {
   const existing = await readIndex();
   if (existing) return existing;
@@ -92,24 +89,25 @@ async function ensureIndex(): Promise<ProfilesIndex> {
   const migrated = await migrateLegacyIfNeeded();
   if (migrated) return migrated;
 
+  if (!canPersist()) return unsavedIndex();
+
   const id = randomUUID();
   const index: ProfilesIndex = {
     activeId: id,
     profiles: [{ id, label: "Profile 1" }],
   };
-  await ensureDir(PROFILES_DIR);
-  await writeJson(profilePath(id), emptyProfile());
+  await persistSaveProfile(id, "Profile 1", emptyProfile());
   await writeIndex(index);
   return index;
 }
 
 async function loadProfileById(id: string): Promise<Profile> {
-  const stored = await readJson<Record<string, unknown>>(profilePath(id));
+  const stored = await persistLoadProfile(id);
   if (!stored) return emptyProfile();
 
   // One-time seed from settings when this field still lived there.
   if (!Array.isArray(stored.bulletsPerCompany)) {
-    const settingsRaw = await readJson<Record<string, unknown>>(SETTINGS_FILE);
+    const settingsRaw = await persistLoadSettings();
     const legacy = legacyBulletsPerCompany(settingsRaw);
     if (legacy) stored.bulletsPerCompany = legacy;
   }
@@ -137,9 +135,10 @@ export async function loadProfile(): Promise<Profile> {
 export async function saveProfile(profile: Profile): Promise<Profile> {
   const index = await ensureIndex();
   const parsed = ProfileSchema.parse(profile);
-  await writeJson(profilePath(index.activeId), parsed);
-
   const meta = index.profiles.find((entry) => entry.id === index.activeId);
+  const label = meta?.label || labelFromProfile(parsed, "Profile");
+  await persistSaveProfile(index.activeId, label, parsed);
+
   if (meta && parsed.fullName.trim()) {
     // Keep custom dropdown labels (e.g. "Mar Angelo"). Only fill in when the
     // label is still a placeholder like "Profile 1".
@@ -176,7 +175,7 @@ export async function createProfile(label?: string, country?: ProfileCountry): P
 
   index.profiles.push({ id, label: nextLabel });
   index.activeId = id;
-  await writeJson(profilePath(id), blank);
+  await persistSaveProfile(id, nextLabel, blank);
   await writeIndex(index);
   return listProfiles();
 }
@@ -199,7 +198,7 @@ export async function deleteProfile(id?: string): Promise<ProfilesSnapshot> {
   }
 
   await writeIndex(index);
-  await fs.unlink(profilePath(targetId)).catch(() => undefined);
+  await persistDeleteProfile(targetId);
   return listProfiles();
 }
 

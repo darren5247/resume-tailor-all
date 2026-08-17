@@ -154,6 +154,7 @@ export function GenerateView({
               <h2 className="text-base text-fg">Progress</h2>
               <p className="mt-0.5 text-xs text-fg-muted">
                 {counts.done} done · {counts.running} running · {counts.failed} failed
+                {counts.cancelled > 0 && ` · ${counts.cancelled} cancelled`}
                 {run.usage.calls > 0 && (
                   <>
                     {" "}

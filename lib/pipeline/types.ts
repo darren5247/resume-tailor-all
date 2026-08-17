@@ -1,4 +1,5 @@
 import type { UsageTotals } from "../llm/client";
+import type { HiringChannel, WorkplaceType } from "../llm/schemas";
 
 export const STEPS = [
   { id: "scrape", label: "Scrape" },
@@ -31,6 +32,22 @@ export interface JobState {
   note: string;
   company: string;
   role: string;
+  /** direct | agency | unknown — set after JD extract. Badge only when not unknown. */
+  hiringChannel: HiringChannel;
+  /** End client when hiringChannel is agency; otherwise "". */
+  clientCompany: string;
+  /** True when the posting unmistakably identifies the employer as a startup. */
+  isStartup: boolean;
+  /** remote | hybrid | onsite | unspecified — set after JD extract. */
+  workplaceType: WorkplaceType;
+  /** Stated pay from the posting, e.g. "$90k–$110k / year". Empty when unstated. */
+  salaryExpectation: string;
+  /** Lowest stated cash figure in the posting's currency; null when unstated. */
+  salaryMin: number | null;
+  /** Highest stated cash figure in the posting's currency; null when unstated. */
+  salaryMax: number | null;
+  /** ISO 4217 code (USD, COP, …). Empty when unstated. */
+  salaryCurrency: string;
   error: string | null;
   /** What each rung of the scrape ladder reported, shown when a job fails. */
   attempts: string[];
@@ -80,10 +97,12 @@ export function summarize(run: RunState) {
   let done = 0;
   let running = 0;
   let failed = 0;
+  let cancelled = 0;
   for (const job of run.jobs) {
     if (job.status === "done") done += 1;
     else if (job.status === "running") running += 1;
     else if (job.status === "failed") failed += 1;
+    else if (job.status === "cancelled") cancelled += 1;
   }
-  return { done, running, failed, queued: run.total - done - running - failed };
+  return { done, running, failed, cancelled, queued: run.total - done - running - failed - cancelled };
 }

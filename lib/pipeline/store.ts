@@ -10,6 +10,8 @@ export interface RunRecord {
   settings: Settings;
   profile: Profile;
   controller: AbortController;
+  /** Per-job abort so one resume can be cancelled without stopping the batch. */
+  jobControllers: Map<string, AbortController>;
   listeners: Set<(state: RunState) => void>;
   persistTimer: NodeJS.Timeout | null;
 }
@@ -26,10 +28,32 @@ const registry: Map<string, RunRecord> = (() => {
   return store[key];
 })();
 
-export function createRun(record: Omit<RunRecord, "listeners" | "persistTimer">): RunRecord {
-  const full: RunRecord = { ...record, listeners: new Set(), persistTimer: null };
+export function createRun(record: Omit<RunRecord, "listeners" | "persistTimer" | "jobControllers">): RunRecord {
+  const jobControllers = new Map(record.state.jobs.map((job) => [job.id, new AbortController()]));
+  const full: RunRecord = { ...record, jobControllers, listeners: new Set(), persistTimer: null };
   registry.set(record.state.id, full);
   return full;
+}
+
+export function getJobController(runId: string, jobId: string): AbortController | undefined {
+  const record = registry.get(runId);
+  if (!record) return undefined;
+  record.jobControllers ??= new Map();
+  let controller = record.jobControllers.get(jobId);
+  if (!controller) {
+    controller = new AbortController();
+    record.jobControllers.set(jobId, controller);
+  }
+  return controller;
+}
+
+export function resetJobController(runId: string, jobId: string): AbortController | undefined {
+  const record = registry.get(runId);
+  if (!record) return undefined;
+  record.jobControllers ??= new Map();
+  const controller = new AbortController();
+  record.jobControllers.set(jobId, controller);
+  return controller;
 }
 
 export function getRun(id: string): RunRecord | undefined {

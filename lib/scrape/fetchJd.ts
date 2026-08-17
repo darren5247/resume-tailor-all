@@ -4,6 +4,7 @@ import { withPage } from "./browser";
 import { isKnownBlocked } from "./detect";
 import {
   extractEmbeddedJsonJob,
+  extractInertiaJob,
   extractJobFromUnknownJson,
   extractJsonLdJob,
   extractNextDataJob,
@@ -24,7 +25,7 @@ const MAX_JD_CHARS = 24_000;
  *   1. ATS API adapter   no browser, no CAPTCHA, cleanest text
  *   2. Teamtailor-style `/jobs.json` on custom career domains
  *   3. JSON-LD JobPosting from the served HTML
- *   4. __NEXT_DATA__, embedded JSON blobs, then densest-text readability
+ *   4. __NEXT_DATA__, Inertia data-page, embedded JSON blobs, then densest-text readability
  *   5. Chromium render (+ network JSON capture), then rungs 3 and 4 again
  */
 export async function fetchJobDescription(rawUrl: string, ctx: ScrapeContext): Promise<JdSource> {
@@ -137,6 +138,7 @@ function extractFromHtml(html: string, attempts: string[], prefix = ""): JdSourc
   const extractors: [string, (input: string) => JdSource | null, boolean][] = [
     ["jsonld", extractJsonLdJob, true],
     ["next-data", extractNextDataJob, false],
+    ["inertia", extractInertiaJob, false],
     ["embedded-json", extractEmbeddedJsonJob, false],
     ["readability", extractReadableText, false],
   ];

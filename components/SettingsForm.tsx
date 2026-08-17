@@ -33,6 +33,8 @@ export function SettingsForm({ initial }: { initial: RedactedSettings }) {
       setForm(data);
       setApiKeyInput("");
       setStatus("Saved.");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not save.");
     } finally {
       setBusy(null);
     }
@@ -69,8 +71,9 @@ export function SettingsForm({ initial }: { initial: RedactedSettings }) {
       <section className="panel p-5">
         <h2 className="text-base text-fg">LLM provider</h2>
         <p className="mt-0.5 text-xs text-fg-muted">
-          Your key stays on this machine in data/settings.json. OpenAI keys work as-is; OpenRouter
-          keys (<code className="text-fg-faint">sk-or-...</code>) auto-use OpenRouter&apos;s base URL.
+          Your API key is stored in Postgres on Vercel, or in data/settings.json when you run locally.
+          OpenAI keys work as-is; OpenRouter keys (<code className="text-fg-faint">sk-or-...</code>) auto-use
+          OpenRouter&apos;s base URL.
         </p>
 
         <div className="mt-4 space-y-3">

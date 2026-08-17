@@ -55,6 +55,8 @@ export function ProfileForm({
         setStatus(`Saved “${profileLabel}”.`);
         window.dispatchEvent(new Event("resume-tailor:profile-saved"));
       }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not save.");
     } finally {
       setBusy(null);
     }

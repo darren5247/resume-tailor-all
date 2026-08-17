@@ -30,8 +30,9 @@ export interface PacketRequest {
 }
 
 /**
- * One folder per job, dated so repeated applications to the same company stay
- * distinguishable, plus a zip of exactly that folder for one-click sending.
+ * One folder per job: `{YYYY-MM-DD}_{company}_{role}`, dated so repeated
+ * applications stay distinguishable. Company/role should already be reconciled
+ * from URL + JD extract (see resolveFolderIdentity).
  */
 export async function writePacket(request: PacketRequest): Promise<Packet> {
   const date = new Date().toISOString().slice(0, 10);

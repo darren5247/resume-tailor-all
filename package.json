@@ -11,6 +11,8 @@
     "bakeoff": "tsx scripts/model-bakeoff.ts"
   },
   "dependencies": {
+    "@neondatabase/serverless": "^1.1.0",
+    "@vercel/blob": "^2.8.0",
     "archiver": "^7.0.1",
     "cheerio": "^1.2.0",
     "docx": "^9.7.1",

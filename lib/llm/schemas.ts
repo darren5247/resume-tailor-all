@@ -7,6 +7,14 @@ import { z } from "zod";
 export const WorkplaceTypeSchema = z.enum(["remote", "hybrid", "onsite", "unspecified"]).default("unspecified");
 export type WorkplaceType = z.infer<typeof WorkplaceTypeSchema>;
 
+/**
+ * Who is hiring: the end employer ("direct") vs a recruiter/staffing firm posting
+ * for a client ("agency"). "unknown" unless the posting makes it unmistakable —
+ * badges are only shown for direct/agency.
+ */
+export const HiringChannelSchema = z.enum(["direct", "agency", "unknown"]).default("unknown");
+export type HiringChannel = z.infer<typeof HiringChannelSchema>;
+
 /** Structured job description, the output of the Extract step. */
 export const JobSpecSchema = z.object({
   title: z.string().default(""),
@@ -19,6 +27,21 @@ export const JobSpecSchema = z.object({
    * (no fully remote option); unspecified = posting does not say.
    */
   workplaceType: WorkplaceTypeSchema,
+  /**
+   * direct = employer hiring for itself; agency = recruiter/staffing/search firm
+   * posting on behalf of a client; unknown when unclear.
+   */
+  hiringChannel: HiringChannelSchema,
+  /**
+   * When hiringChannel is "agency", the end client's brand if the posting names it.
+   * Empty for direct hires or when the client is undisclosed.
+   */
+  clientCompany: z.string().default(""),
+  /**
+   * True only when the posting identifies the employer (or named agency client)
+   * as a startup. False when that is unstated or only a candidate-experience ask.
+   */
+  isStartup: z.boolean().default(false),
   /**
    * Countries/regions where the candidate must live or be based, when the posting
    * explicitly requires it (e.g. "US only", "must be located in Canada").
@@ -37,6 +60,21 @@ export const JobSpecSchema = z.object({
    * "COP 8M / month". Empty when the posting does not mention compensation.
    */
   salaryExpectation: z.string().default(""),
+  /**
+   * Lowest stated cash figure in the posting's own currency. Null when unstated.
+   * Equal to salaryMax when the posting names one number, not a band.
+   */
+  salaryMin: z.number().nullable().default(null),
+  /**
+   * Highest stated cash figure in the posting's own currency. Null when pay is
+   * unstated. Equal to salaryMin when the posting names one number, not a band.
+   */
+  salaryMax: z.number().nullable().default(null),
+  /**
+   * ISO 4217 code for the stated cash figures (USD, EUR, COP, GBP, …).
+   * Empty when currency is unstated or only implied by a "$" with no code.
+   */
+  salaryCurrency: z.string().default(""),
   /**
    * Highest stated figure converted to monthly USD for eligibility gating.
    * Yearly ÷ 12, hourly × 160, weekly × 4.33. Null when pay is unstated or
