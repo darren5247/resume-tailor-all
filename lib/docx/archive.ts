@@ -1,10 +1,6 @@
 import archiver, { type Archiver } from "archiver";
 import fs from "node:fs";
 
-function nodeFs(): typeof import("node:fs") {
-  return process.getBuiltinModule?.("node:fs") ?? fs;
-}
-
 export interface ArchiveFile {
   name: string;
   content: Buffer | string;
@@ -18,7 +14,7 @@ export function zipFiles(destination: string, files: ArchiveFile[]): Promise<voi
   const archive = newArchive();
 
   return new Promise((resolve, reject) => {
-    const output = nodeFs().createWriteStream(/* turbopackIgnore: true */ destination);
+    const output = fs.createWriteStream(destination);
 
     output.on("close", () => resolve());
     output.on("error", reject);

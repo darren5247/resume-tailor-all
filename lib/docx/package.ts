@@ -1,6 +1,7 @@
+import fsp from "node:fs/promises";
 import path from "node:path";
 import { zipFiles, type ArchiveFile } from "./archive";
-import { ensureDir, pathExists, safeFileName, slugify, writeFile } from "../paths";
+import { ensureDir, safeFileName, slugify } from "../paths";
 
 export interface PacketFile extends ArchiveFile {}
 
@@ -67,7 +68,7 @@ export async function writePacket(request: PacketRequest): Promise<Packet> {
 
   for (const file of files) {
     const target = path.join(/* turbopackIgnore: true */ folder, file.name);
-    await writeFile(target, file.content);
+    await fsp.writeFile(target, file.content);
   }
 
   const zipName = `${safeFileName(slugify(request.company || "company", 32))}-${safeFileName(
@@ -90,9 +91,18 @@ export async function writePacket(request: PacketRequest): Promise<Packet> {
 async function uniqueFolder(candidate: string): Promise<string> {
   let folder = candidate;
   let counter = 2;
-  while (await pathExists(folder)) {
+  while (await exists(folder)) {
     folder = `${candidate}-${counter}`;
     counter += 1;
   }
   return folder;
+}
+
+async function exists(target: string): Promise<boolean> {
+  try {
+    await fsp.access(target);
+    return true;
+  } catch {
+    return false;
+  }
 }
