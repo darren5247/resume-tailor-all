@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import fs from "node:fs/promises";
 import path from "node:path";
 import { getState, loadPersistedRun } from "@/lib/pipeline/store";
+import { readFileBuffer } from "@/lib/paths";
 
 export const runtime = "nodejs";
 
@@ -30,7 +30,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   }
 
   try {
-    const data = await fs.readFile(target);
+    const data = await readFileBuffer(target);
     const name = path.basename(target);
     return new NextResponse(new Uint8Array(data), {
       headers: {

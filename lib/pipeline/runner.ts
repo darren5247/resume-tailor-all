@@ -1,15 +1,12 @@
 import { randomUUID } from "node:crypto";
-import fsp from "node:fs/promises";
 import path from "node:path";
 import pLimit from "p-limit";
-import { ensureDir } from "../paths";
+import { ensureDir, removeDir, resolveOutputDir } from "../paths";
 import { loadProfile, profileIsUsable } from "../profile/store";
 import { loadSettings } from "../settings";
-import { inspectUrl } from "../scrape/detect";
+import { hostLabel, normalizeUrl } from "../scrape/url";
 import { createRun, getJobController, getRun, persistNow, resetJobController, update, updateJob } from "./store";
-import { processJob } from "./job";
 import { emptyUsage, initialSteps, type JobState, type RunState } from "./types";
-import { deleteSheetJob, isSheetConfigured } from "../sheets";
 
 export class RunSetupError extends Error {}
 
@@ -21,6 +18,7 @@ export async function startRun(urls: string[]): Promise<RunState> {
   if (profileProblem) throw new RunSetupError(profileProblem);
   if (urls.length === 0) throw new RunSetupError("Paste at least one job URL.");
 
+  settings.outputDir = resolveOutputDir(settings.outputDir);
   await ensureDir(settings.outputDir);
 
   const batchSize = settings.concurrency;
@@ -28,7 +26,7 @@ export async function startRun(urls: string[]): Promise<RunState> {
     id: randomUUID(),
     index,
     url,
-    label: inspectUrl(url)?.label ?? url,
+    label: jobLabel(url),
     status: "queued",
     steps: initialSteps(),
     note: "",
@@ -71,9 +69,11 @@ export async function startRun(urls: string[]): Promise<RunState> {
 
   const record = createRun({ state, settings, profile, controller: new AbortController() });
 
-  // Deliberately not awaited: the POST returns as soon as the run exists, and
-  // the browser follows along over SSE.
-  void execute(state.id).catch(() => undefined);
+  // Return the run first so the browser can subscribe. Compiling the job
+  // pipeline must not block that response.
+  setImmediate(() => {
+    void execute(state.id).catch(() => undefined);
+  });
 
   return record.state;
 }
@@ -83,6 +83,7 @@ async function execute(runId: string): Promise<void> {
   if (!record) return;
 
   const { state, controller } = record;
+  const { processJob } = await import("./job");
   const limit = pLimit(state.batchSize);
   const started = new Set<string>();
   let wave = 0;
@@ -131,7 +132,8 @@ export async function retryJob(runId: string, jobId: string, pastedJd?: string):
     });
   }
 
-  void processJob(runId, jobId, pastedJd)
+  void import("./job")
+    .then(({ processJob }) => processJob(runId, jobId, pastedJd))
     .then(() => persistNow(runId))
     .catch(() => undefined);
 }
@@ -190,11 +192,12 @@ export async function deleteJob(runId: string, jobId: string): Promise<{ sheetWa
   });
 
   if (folder) {
-    await fsp.rm(folder, { recursive: true, force: true }).catch(() => undefined);
+    await removeDir(folder).catch(() => undefined);
   }
   await persistNow(runId);
 
   try {
+    const { deleteSheetJob, isSheetConfigured } = await import("../sheets");
     if (isSheetConfigured(record.settings)) {
       await deleteSheetJob(url, record.settings);
     }
@@ -202,6 +205,11 @@ export async function deleteJob(runId: string, jobId: string): Promise<{ sheetWa
     return { sheetWarning: error instanceof Error ? error.message : String(error) };
   }
   return {};
+}
+
+function jobLabel(url: string): string {
+  const parsed = normalizeUrl(url);
+  return parsed ? hostLabel(parsed) : url;
 }
 
 function jobOutputFolder(outputDir: string, job: JobState): string | null {

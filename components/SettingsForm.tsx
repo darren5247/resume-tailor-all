@@ -9,6 +9,7 @@ type RedactedSettings = Settings & {
   hasGoogleServiceAccount: boolean;
   googleServiceAccountEmail: string;
   googleServiceAccountFromEnv: boolean;
+  outputDirLocked?: boolean;
 };
 
 export function SettingsForm({ initial }: { initial: RedactedSettings }) {
@@ -174,13 +175,22 @@ export function SettingsForm({ initial }: { initial: RedactedSettings }) {
             />
           </Field>
 
-          <Field label="Output folder" hint="Every run writes a dated folder per job here.">
-            <input
-              className="field"
-              value={form.outputDir}
-              onChange={(event) => set("outputDir", event.target.value)}
-            />
-          </Field>
+          {form.outputDirLocked ? (
+            <Field
+              label="Output folder"
+              hint="Vercel cannot write to a folder on your PC. Download each resume from the Generate tab."
+            >
+              <input className="field" value="Downloads from the Generate tab" disabled />
+            </Field>
+          ) : (
+            <Field label="Output folder" hint="Every run writes a dated folder per job here.">
+              <input
+                className="field"
+                value={form.outputDir}
+                onChange={(event) => set("outputDir", event.target.value)}
+              />
+            </Field>
+          )}
 
           <Field label="Language" hint="The language the resume and cover letter are written in.">
             <input
