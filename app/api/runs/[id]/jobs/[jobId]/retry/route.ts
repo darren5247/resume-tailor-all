@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { RunSetupError, retryJob } from "@/lib/pipeline/runner";
+import { schedulePipeline } from "@/lib/pipeline/schedule";
 import { MIN_JD_LENGTH } from "@/lib/scrape/types";
+import { ensureRun } from "@/lib/pipeline/store";
 
 export const runtime = "nodejs";
 // Hobby Fluid max is 300s; higher values fail at "Deploying outputs…".
@@ -27,7 +29,11 @@ export async function POST(
       );
     }
 
-    await retryJob(id, jobId, pasted || undefined);
+    const record = await ensureRun(id);
+    if (!record) throw new RunSetupError("That run is no longer in memory. Start a new run.");
+    if (!record.state.jobs.some((job) => job.id === jobId)) throw new RunSetupError("Unknown job.");
+
+    schedulePipeline(() => retryJob(id, jobId, pasted || undefined));
     return NextResponse.json({ ok: true });
   } catch (error) {
     const status = error instanceof RunSetupError ? 400 : 500;

@@ -60,6 +60,17 @@ async function ensureSchema(): Promise<void> {
         active_profile_id TEXT
       )
     `;
+    await q`
+      CREATE TABLE IF NOT EXISTS pipeline_runs (
+        id TEXT PRIMARY KEY,
+        state JSONB NOT NULL,
+        settings JSONB NOT NULL DEFAULT '{}'::jsonb,
+        profile JSONB NOT NULL DEFAULT '{}'::jsonb,
+        signals JSONB NOT NULL DEFAULT '{"abortRun":false,"abortJobs":[]}'::jsonb,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `;
   })().catch((error) => {
     schemaReady = null;
     throw error;
@@ -160,4 +171,120 @@ export async function dbSaveProfile(id: string, label: string, data: unknown): P
 export async function dbDeleteProfile(id: string): Promise<void> {
   await ensureSchema();
   await sql()`DELETE FROM profiles WHERE id = ${id}`;
+}
+
+export interface PipelineRunSignals {
+  abortRun: boolean;
+  abortJobs: string[];
+}
+
+export interface PipelineRunRow {
+  state: Record<string, unknown>;
+  settings: Record<string, unknown>;
+  profile: Record<string, unknown>;
+  signals: PipelineRunSignals;
+}
+
+function asSignals(value: unknown): PipelineRunSignals {
+  const object = asObject(value);
+  const abortJobs = object?.abortJobs;
+  return {
+    abortRun: object?.abortRun === true,
+    abortJobs: Array.isArray(abortJobs) ? abortJobs.map((id) => String(id)) : [],
+  };
+}
+
+export async function dbSavePipelineRun(id: string, data: {
+  state: unknown;
+  settings: unknown;
+  profile: unknown;
+}): Promise<void> {
+  await ensureSchema();
+  const state = JSON.stringify(data.state);
+  const settings = JSON.stringify(data.settings);
+  const profile = JSON.stringify(data.profile);
+  await sql()`
+    INSERT INTO pipeline_runs (id, state, settings, profile, updated_at)
+    VALUES (${id}, CAST(${state} AS jsonb), CAST(${settings} AS jsonb), CAST(${profile} AS jsonb), NOW())
+    ON CONFLICT (id) DO UPDATE SET state = EXCLUDED.state, updated_at = NOW()
+  `;
+}
+
+export async function dbLoadPipelineRun(id: string): Promise<PipelineRunRow | null> {
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT state, settings, profile, signals FROM pipeline_runs WHERE id = ${id} LIMIT 1
+  `;
+  const row = rows[0];
+  if (!row) return null;
+  const state = asObject(row.state);
+  const settings = asObject(row.settings);
+  const profile = asObject(row.profile);
+  if (!state || !settings || !profile) return null;
+  return { state, settings, profile, signals: asSignals(row.signals) };
+}
+
+export async function dbListPipelineRuns(): Promise<
+  Array<{ id: string; createdAt: number; status: string; total: number }>
+> {
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT id, state FROM pipeline_runs ORDER BY created_at DESC LIMIT 30
+  `;
+  return rows.flatMap((row) => {
+    const state = asObject(row.state);
+    if (!state) return [];
+    return [
+      {
+        id: String(row.id),
+        createdAt: Number(state.createdAt) || 0,
+        status: String(state.status ?? "done"),
+        total: Number(state.total) || 0,
+      },
+    ];
+  });
+}
+
+export async function dbLoadPipelineSignals(id: string): Promise<PipelineRunSignals | null> {
+  await ensureSchema();
+  const rows = await sql()`SELECT signals FROM pipeline_runs WHERE id = ${id} LIMIT 1`;
+  if (!rows[0]) return null;
+  return asSignals(rows[0].signals);
+}
+
+export async function dbSetPipelineSignals(id: string, patch: { abortRun?: boolean; abortJob?: string }): Promise<boolean> {
+  const current = await dbLoadPipelineSignals(id);
+  if (!current) return false;
+  if (patch.abortRun) current.abortRun = true;
+  if (patch.abortJob && !current.abortJobs.includes(patch.abortJob)) {
+    current.abortJobs.push(patch.abortJob);
+  }
+  const payload = JSON.stringify(current);
+  await sql()`
+    UPDATE pipeline_runs
+    SET signals = CAST(${payload} AS jsonb), updated_at = NOW()
+    WHERE id = ${id}
+  `;
+  return true;
+}
+
+export async function dbClearPipelineSignals(id: string): Promise<void> {
+  await ensureSchema();
+  const payload = JSON.stringify({ abortRun: false, abortJobs: [] });
+  await sql()`
+    UPDATE pipeline_runs
+    SET signals = CAST(${payload} AS jsonb), updated_at = NOW()
+    WHERE id = ${id}
+  `;
+}
+
+export async function dbUpdatePipelineState(id: string, state: unknown): Promise<boolean> {
+  await ensureSchema();
+  const payload = JSON.stringify(state);
+  await sql()`
+    UPDATE pipeline_runs
+    SET state = CAST(${payload} AS jsonb), updated_at = NOW()
+    WHERE id = ${id}
+  `;
+  return true;
 }

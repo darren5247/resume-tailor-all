@@ -4,12 +4,6 @@ import { listRuns } from "@/lib/pipeline/store";
 export const runtime = "nodejs";
 
 export async function GET() {
-  return NextResponse.json(
-    listRuns().map((run) => ({
-      id: run.id,
-      createdAt: run.createdAt,
-      status: run.status,
-      total: run.total,
-    })),
-  );
+  const runs = await listRuns();
+  return NextResponse.json(runs);
 }

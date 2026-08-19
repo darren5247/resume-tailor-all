@@ -20,6 +20,8 @@ export interface DownloadRef {
   /** Path relative to the run's output directory, which is what the API resolves. */
   file: string;
   kind: "resume" | "resume-pdf" | "cover" | "zip";
+  /** Private Vercel Blob URL. Set when generating on a serverless host. */
+  blobUrl?: string;
 }
 
 export interface JobState {

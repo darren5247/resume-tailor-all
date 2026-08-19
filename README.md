@@ -2,7 +2,7 @@
 
 Paste a list of job URLs. For each one the site scrapes the job description, tailors your resume and a cover letter against it, scores the result for ATS fit, and hands back a `.docx` / `.pdf` pair plus a `.zip` — with live per-step progress and a Download All button.
 
-It runs locally on your machine. Locally, your profile, API key and generated documents stay on disk. On Vercel they must live in Postgres — the serverless filesystem is wiped between requests, so a Save that only writes a JSON file looks successful and then disappears.
+It runs locally on your machine and on Vercel. Locally, your profile, API key and generated documents stay on disk. On Vercel, profiles and settings live in Postgres, run progress is stored there too, and generated packets go to Vercel Blob — the serverless filesystem is wiped between requests.
 
 ## Setup
 
@@ -16,12 +16,15 @@ Copy `.env.example` to `.env.local` if you want local runs to use the same Postg
 
 ## Deploying to Vercel
 
-Vercel functions cannot keep `data/profiles/` or `data/settings.json`. Add Neon Postgres and the app stores profiles and settings there automatically.
+Vercel functions cannot keep `data/profiles/` or `data/settings.json`. Add Neon Postgres and a Blob store; the app uses those automatically for profiles, settings, live Generate progress, and downloads.
 
 1. In the Vercel dashboard: **Storage → Create Database → Neon Postgres**.
 2. Connect that database to this project. Vercel sets `DATABASE_URL` (and `POSTGRES_URL`) for you.
-3. Redeploy. Tables are created on first request.
-4. Fill in Profile and Settings again on the live site and press **Save**.
+3. **Storage → Create Store → Blob**, connect it to this project so `BLOB_READ_WRITE_TOKEN` is set.
+4. Redeploy. Tables are created on first request.
+5. Fill in Profile and Settings again on the live site and press **Save**.
+
+Generate on the live site is limited to about 250 seconds per run (Vercel Hobby). Chromium is not available there, so postings that need a real browser still use the paste-JD fallback.
 
 Local JSON under `data/` is gitignored, so a deploy never copies the profile you saved on your laptop. Point local `.env.local` at the same `DATABASE_URL` if you want one shared copy of that data.
 
@@ -33,7 +36,7 @@ Connect a spreadsheet on the Settings tab so job-card badges stay in sync with y
 2. Share the spreadsheet with that service account email as **Editor**.
 3. Paste the spreadsheet URL and the JSON key into Settings, then **Test spreadsheet**.
 
-The first row is `URL`, `Company`, `Role`, `Badges`, `Folder`. If that header is missing, it is inserted. Direct hire / Agency (and other badges) always go in **Badges**; the dated resume folder name always goes in **Folder**. Labels that landed in the wrong column are moved back on the next sync or when you click **Test spreadsheet**.
+The first row is `Badges`, `URL`, `Folder`. If that header is missing, it is inserted. Direct hire / Agency (and other badges) always go in **Badges**; job links go in **URL**; the dated resume folder name always goes in **Folder**. Labels that landed in the wrong column are moved back on the next sync or when you click **Test spreadsheet**.
 
 When extract shows **Direct hire**, **Agency**, **Startup**, **Hybrid**, or **On-site** on a card, those labels are written to the matching URL row. After the zip step, the folder name (for example `2026-08-17_acme_senior-data-engineer`) is written to **Folder**. If the URL is not in the sheet yet and a badge fired or a packet was written, a row is appended. Deleting a job on the site deletes that URL's row. **Load from Google Sheet** on the Generate tab pulls URLs into the box.
 

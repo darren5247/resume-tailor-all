@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import path from "node:path";
+import { streamBlob } from "@/lib/blob-store";
 import { getState, loadPersistedRun } from "@/lib/pipeline/store";
 import { readFileBuffer } from "@/lib/paths";
 
@@ -20,6 +21,23 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
 
   const state = getState(id) ?? (await loadPersistedRun(id));
   if (!state) return NextResponse.json({ error: "Unknown run" }, { status: 404 });
+
+  const wanted = file.split(path.sep).join("/");
+  const download = state.jobs.flatMap((job) => job.downloads).find((entry) => entry.file === wanted);
+  if (download?.blobUrl) {
+    try {
+      const blob = await streamBlob(download.blobUrl);
+      return new NextResponse(blob.stream, {
+        headers: {
+          "Content-Type": blob.contentType || CONTENT_TYPES[path.extname(wanted).toLowerCase()] || "application/octet-stream",
+          "Content-Disposition": `attachment; filename="${encodeURIComponent(download.label)}"`,
+          "Content-Length": String(blob.size),
+        },
+      });
+    } catch {
+      return NextResponse.json({ error: "File not found" }, { status: 404 });
+    }
+  }
 
   // The requested path is client-supplied, so resolve it and confirm it still
   // sits inside the run's output directory before reading anything.

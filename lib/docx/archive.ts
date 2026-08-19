@@ -32,6 +32,16 @@ export function zipFiles(destination: string, files: ArchiveFile[]): Promise<voi
   });
 }
 
+/** Zip in-memory files (Blob-backed packets) without touching disk. */
+export function createBufferArchive(files: ArchiveFile[]): Archiver {
+  const archive = newArchive();
+  for (const file of files) {
+    archive.append(file.content, { name: file.name });
+  }
+  void archive.finalize();
+  return archive;
+}
+
 /** Bulk download: stream a zip of many folders without staging it on disk. */
 export function createFolderArchive(entries: { folder: string; name: string }[]): Archiver {
   const archive = newArchive();

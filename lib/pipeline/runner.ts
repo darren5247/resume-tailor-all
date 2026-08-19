@@ -1,11 +1,28 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import pLimit from "p-limit";
+import { deleteBlobs } from "../blob-store";
 import { ensureDir, removeDir, resolveOutputDir } from "../paths";
 import { loadProfile, profileIsUsable } from "../profile/store";
 import { loadSettings } from "../settings";
 import { hostLabel, normalizeUrl } from "../scrape/url";
-import { createRun, getJobController, getRun, persistNow, resetJobController, update, updateJob } from "./store";
+import {
+  applyRemoteAborts,
+  createRun,
+  ensureRun,
+  getJobController,
+  getRun,
+  persistNow,
+  persistStateOnly,
+  requestAbort,
+  clearAbortSignals,
+  resetJobController,
+  startAbortPoller,
+  stopAbortPoller,
+  update,
+  updateJob,
+  loadPersistedRun,
+} from "./store";
 import { emptyUsage, initialSteps, type JobState, type RunState } from "./types";
 
 export class RunSetupError extends Error {}
@@ -68,14 +85,35 @@ export async function startRun(urls: string[]): Promise<RunState> {
   };
 
   const record = createRun({ state, settings, profile, controller: new AbortController() });
-
-  // Return the run first so the browser can subscribe. Compiling the job
-  // pipeline must not block that response.
-  setImmediate(() => {
-    void execute(state.id).catch(() => undefined);
-  });
-
+  await persistNow(record.state.id);
   return record.state;
+}
+
+export async function executeRun(runId: string): Promise<void> {
+  const record = getRun(runId);
+  if (!record) return;
+
+  startAbortPoller(runId);
+  try {
+    await execute(runId);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("[resume-tailor] run failed", runId, error);
+    update(runId, (draft) => {
+      if (draft.status === "running") draft.status = "done";
+      for (const job of draft.jobs) {
+        if (job.status === "queued" || job.status === "running") {
+          job.status = "failed";
+          job.error = message;
+          job.note = "";
+          job.finishedAt = Date.now();
+        }
+      }
+    });
+  } finally {
+    stopAbortPoller(runId);
+    await persistNow(runId);
+  }
 }
 
 async function execute(runId: string): Promise<void> {
@@ -91,6 +129,9 @@ async function execute(runId: string): Promise<void> {
   // Waves of currently queued jobs, so deleting a card mid-run cannot skip the
   // ones after it. The pause between waves still gives rate limits room to recover.
   while (!controller.signal.aborted) {
+    await applyRemoteAborts(runId);
+    if (controller.signal.aborted) break;
+
     const queued = state.jobs.filter((job) => job.status === "queued" && !started.has(job.id));
     if (queued.length === 0) break;
 
@@ -116,7 +157,7 @@ async function execute(runId: string): Promise<void> {
 }
 
 export async function retryJob(runId: string, jobId: string, pastedJd?: string): Promise<void> {
-  const record = getRun(runId);
+  const record = await ensureRun(runId);
   if (!record) throw new RunSetupError("That run is no longer in memory. Start a new run.");
 
   const job = record.state.jobs.find((entry) => entry.id === jobId);
@@ -126,50 +167,103 @@ export async function retryJob(runId: string, jobId: string, pastedJd?: string):
     record.controller = new AbortController();
   }
   resetJobController(runId, jobId);
-  if (record.state.status === "cancelled") {
+  await clearAbortSignals(runId);
+  if (record.state.status !== "running") {
     update(runId, (state) => {
       state.status = "running";
     });
   }
 
-  void import("./job")
-    .then(({ processJob }) => processJob(runId, jobId, pastedJd))
-    .then(() => persistNow(runId))
-    .catch(() => undefined);
+  startAbortPoller(runId);
+  try {
+    const { processJob } = await import("./job");
+    await processJob(runId, jobId, pastedJd);
+    const live = getRun(runId);
+    if (live && live.state.jobs.every((entry) => entry.status !== "running" && entry.status !== "queued")) {
+      update(runId, (state) => {
+        if (state.status === "running") state.status = "done";
+      });
+    }
+  } finally {
+    stopAbortPoller(runId);
+    await persistNow(runId);
+  }
 }
 
-export function cancelRun(runId: string): boolean {
+export async function cancelRun(runId: string): Promise<boolean> {
   const record = getRun(runId);
-  if (!record) return false;
-  record.controller.abort();
-  record.jobControllers ??= new Map();
-  for (const jobController of record.jobControllers.values()) jobController.abort();
+  if (record) {
+    record.controller.abort();
+    record.jobControllers ??= new Map();
+    for (const jobController of record.jobControllers.values()) jobController.abort();
+  }
+
+  const signaled = await requestAbort(runId);
+  if (!record) {
+    const state = await loadPersistedRun(runId);
+    if (!state) return signaled;
+    state.status = "cancelled";
+    for (const job of state.jobs) {
+      if (job.status === "queued" || job.status === "running") {
+        job.status = "cancelled";
+        job.error = "Cancelled.";
+        job.note = "";
+        job.finishedAt = Date.now();
+      }
+    }
+    await persistStateOnly(state);
+    return true;
+  }
+
+  update(runId, (draft) => {
+    draft.status = "cancelled";
+    for (const job of draft.jobs) {
+      if (job.status === "queued" || job.status === "running") {
+        job.status = "cancelled";
+        job.error = "Cancelled.";
+        job.note = "";
+        job.finishedAt = Date.now();
+      }
+    }
+  });
+  await persistNow(runId);
   return true;
 }
 
-export function cancelJob(runId: string, jobId: string): boolean {
+export async function cancelJob(runId: string, jobId: string): Promise<boolean> {
   const record = getRun(runId);
-  if (!record) return false;
+  const job = record?.state.jobs.find((entry) => entry.id === jobId);
 
-  const job = record.state.jobs.find((entry) => entry.id === jobId);
-  if (!job) return false;
-  if (job.status !== "queued" && job.status !== "running") return false;
+  if (record && job) {
+    if (job.status !== "queued" && job.status !== "running") return false;
+    getJobController(runId, jobId)?.abort();
+    updateJob(runId, jobId, (state) => {
+      state.status = "cancelled";
+      state.error = "Cancelled.";
+      state.note = "";
+      state.finishedAt = Date.now();
+    });
+    await requestAbort(runId, jobId);
+    await persistNow(runId);
+    return true;
+  }
 
-  getJobController(runId, jobId)?.abort();
+  const state = await loadPersistedRun(runId);
+  const stored = state?.jobs.find((entry) => entry.id === jobId);
+  if (!state || !stored) return false;
+  if (stored.status !== "queued" && stored.status !== "running") return false;
 
-  updateJob(runId, jobId, (state) => {
-    state.status = "cancelled";
-    state.error = "Cancelled.";
-    state.note = "";
-    state.finishedAt = Date.now();
-  });
-
-  void persistNow(runId);
+  stored.status = "cancelled";
+  stored.error = "Cancelled.";
+  stored.note = "";
+  stored.finishedAt = Date.now();
+  await requestAbort(runId, jobId);
+  await persistStateOnly(state);
   return true;
 }
 
 export async function deleteJob(runId: string, jobId: string): Promise<{ sheetWarning?: string }> {
-  const record = getRun(runId);
+  const record = await ensureRun(runId);
   if (!record) throw new RunSetupError("That run is no longer in memory. Start a new run.");
 
   const job = record.state.jobs.find((entry) => entry.id === jobId);
@@ -180,6 +274,7 @@ export async function deleteJob(runId: string, jobId: string): Promise<{ sheetWa
   record.jobControllers.delete(jobId);
 
   const folder = jobOutputFolder(record.state.outputDir, job);
+  await deleteBlobs(job.downloads.map((download) => download.blobUrl));
 
   update(runId, (state) => {
     state.jobs = state.jobs.filter((entry) => entry.id !== jobId);

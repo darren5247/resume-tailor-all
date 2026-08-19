@@ -8,6 +8,7 @@ import { repairInstruction, validateDraft, type ValidationReport } from "../llm/
 import type { CoverLetter, JobSpec, ResumeDoc } from "../llm/schemas";
 import { renderCoverLetterDocx } from "../docx/coverLetter";
 import { renderResumeDocx } from "../docx/resume";
+import { attachBlobDownloads } from "../blob-store";
 import { writePacket } from "../docx/package";
 import { renderResumePdf } from "../pdf/resume";
 import { detectTargetRole } from "../profile/detectRole";
@@ -19,7 +20,7 @@ import { scoreResume } from "../score/ats";
 import { deleteSheetJob, isSheetConfigured, upsertSheetJob } from "../sheets";
 import { checkSalaryEligibility, workplaceAlert } from "./eligibility";
 import { resolveFolderIdentity } from "./naming";
-import { getJobController, getRun, update, updateJob } from "./store";
+import { getJobController, getRun, persistNow, update, updateJob } from "./store";
 import { initialSteps, type DownloadRef, type StepId } from "./types";
 
 /**
@@ -74,6 +75,7 @@ export async function processJob(runId: string, jobId: string, pastedJd?: string
     state.steps = initialSteps();
     state.note = pastedJd ? "Using pasted job description..." : "Starting...";
   });
+  await persistNow(runId);
 
   if (!jobStillPresent(runId, jobId)) return;
   if (getRun(runId)?.state.jobs.find((entry) => entry.id === jobId)?.status === "cancelled") return;
@@ -286,14 +288,35 @@ export async function processJob(runId: string, jobId: string, pastedJd?: string
     });
 
     const person = firstName(profile);
-    const downloads: DownloadRef[] = [
-      { label: `Resume-${person}.docx`, file: rel(settings.outputDir, packet.resume), kind: "resume" },
-      { label: `Resume-${person}.pdf`, file: rel(settings.outputDir, packet.resumePdf), kind: "resume-pdf" },
+    const localDownloads: Array<DownloadRef & { absolute: string }> = [
+      {
+        label: `Resume-${person}.docx`,
+        file: rel(settings.outputDir, packet.resume),
+        kind: "resume",
+        absolute: packet.resume,
+      },
+      {
+        label: `Resume-${person}.pdf`,
+        file: rel(settings.outputDir, packet.resumePdf),
+        kind: "resume-pdf",
+        absolute: packet.resumePdf,
+      },
     ];
     if (packet.coverLetter) {
-      downloads.push({ label: `Coverletter-${person}.docx`, file: rel(settings.outputDir, packet.coverLetter), kind: "cover" });
+      localDownloads.push({
+        label: `Coverletter-${person}.docx`,
+        file: rel(settings.outputDir, packet.coverLetter),
+        kind: "cover",
+        absolute: packet.coverLetter,
+      });
     }
-    downloads.push({ label: path.basename(packet.zip), file: rel(settings.outputDir, packet.zip), kind: "zip" });
+    localDownloads.push({
+      label: path.basename(packet.zip),
+      file: rel(settings.outputDir, packet.zip),
+      kind: "zip",
+      absolute: packet.zip,
+    });
+    const downloads = await attachBlobDownloads(runId, path.basename(packet.folder), localDownloads);
 
     if (!jobStillPresent(runId, jobId)) return;
     setStep("zip", "done");
@@ -346,8 +369,6 @@ async function syncJobToSheet(runId: string, jobId: string, folder?: string): Pr
     await upsertSheetJob(
       {
         url,
-        company: job.company,
-        role: job.role,
         badges: job,
         folder,
       },

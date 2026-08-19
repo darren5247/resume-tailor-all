@@ -13,8 +13,6 @@ import { sheetConfigFromSettings, type SheetConfig } from "./config";
 
 export interface SheetJobRow {
   url: string;
-  company: string;
-  role: string;
   badges: BadgeSource;
   /** Dated output folder basename, e.g. `2026-08-17_acme_senior-data-engineer`. */
   folder?: string;
@@ -27,16 +25,12 @@ interface Layout {
   urlCol: number;
   badgesCol: number;
   folderCol: number;
-  companyCol: number;
-  roleCol: number;
   rows: string[][];
 }
 
 const URL_HEADERS = /^(url|link|job\s*url|job\s*link|posting(\s*url)?|job\s*posting)$/i;
 const BADGE_HEADERS = /^(badge|badges|labels?|tags?|type|hiring(\s*channel)?|channel)$/i;
 const FOLDER_HEADERS = /^(folder|resume\s*folder|output\s*folder|packet|directory)$/i;
-const COMPANY_HEADERS = /^(company|employer|organization|org)$/i;
-const ROLE_HEADERS = /^(role|title|position|job\s*title|job)$/i;
 const BADGE_TOKEN = /^(direct hire|agency|startup|hybrid|on-site)$/i;
 const FOLDER_VALUE = /^\d{4}-\d{2}-\d{2}_[a-z0-9][a-z0-9-]*$/i;
 
@@ -118,13 +112,29 @@ function pickSheet(sheets: SheetProperties[], config: SheetConfig): SheetPropert
   return [...sheets].sort((a, b) => a.index - b.index)[0];
 }
 
-function pinnedColumns(urlCol: number): Pick<Layout, "urlCol" | "companyCol" | "roleCol" | "badgesCol" | "folderCol"> {
+/** Canonical tracker: Badges | URL | Folder. */
+function canonicalColumns(): Pick<Layout, "urlCol" | "badgesCol" | "folderCol"> {
+  return {
+    badgesCol: 0,
+    urlCol: 1,
+    folderCol: 2,
+  };
+}
+
+function columnsAroundUrl(urlCol: number): Pick<Layout, "urlCol" | "badgesCol" | "folderCol"> {
+  const canonical = canonicalColumns();
+  if (urlCol === canonical.urlCol) return canonical;
+  const used = new Set<number>([urlCol]);
+  const take = (preferred: number): number => {
+    let col = preferred;
+    while (used.has(col)) col += 1;
+    used.add(col);
+    return col;
+  };
   return {
     urlCol,
-    companyCol: urlCol + 1,
-    roleCol: urlCol + 2,
-    badgesCol: urlCol + 3,
-    folderCol: urlCol + 4,
+    badgesCol: take(urlCol === 0 ? 1 : 0),
+    folderCol: take(urlCol === 0 ? 2 : urlCol + 1),
   };
 }
 
@@ -134,9 +144,7 @@ function looksLikeHeaderRow(first: string[]): boolean {
     (cell) =>
       URL_HEADERS.test(cell.trim()) ||
       BADGE_HEADERS.test(cell.trim()) ||
-      FOLDER_HEADERS.test(cell.trim()) ||
-      COMPANY_HEADERS.test(cell.trim()) ||
-      ROLE_HEADERS.test(cell.trim()),
+      FOLDER_HEADERS.test(cell.trim()),
   );
 }
 
@@ -158,7 +166,7 @@ async function loadLayout(settings?: Settings): Promise<Layout | null> {
       config,
       sheet,
       hasHeader: true,
-      ...pinnedColumns(0),
+      ...canonicalColumns(),
       rows: [],
     };
   }
@@ -170,7 +178,7 @@ async function loadLayout(settings?: Settings): Promise<Layout | null> {
       config,
       sheet,
       hasHeader: false,
-      ...pinnedColumns(found >= 0 ? found : 0),
+      ...columnsAroundUrl(found >= 0 ? found : canonicalColumns().urlCol),
       rows,
     };
   }
@@ -184,11 +192,9 @@ async function loadLayout(settings?: Settings): Promise<Layout | null> {
   };
 }
 
-function allocateColumns(
-  header: string[],
-): Pick<Layout, "urlCol" | "badgesCol" | "folderCol" | "companyCol" | "roleCol"> {
-  const urlCol = findHeaderIndex(header, URL_HEADERS) ?? 0;
-  const pinned = pinnedColumns(urlCol);
+function allocateColumns(header: string[]): Pick<Layout, "urlCol" | "badgesCol" | "folderCol"> {
+  const canonical = canonicalColumns();
+  const urlCol = findHeaderIndex(header, URL_HEADERS) ?? canonical.urlCol;
   const used = new Set<number>([urlCol]);
 
   const take = (found: number | null, fallback: number): number => {
@@ -204,10 +210,8 @@ function allocateColumns(
 
   return {
     urlCol,
-    companyCol: take(findHeaderIndex(header, COMPANY_HEADERS), pinned.companyCol),
-    roleCol: take(findHeaderIndex(header, ROLE_HEADERS), pinned.roleCol),
-    badgesCol: take(findHeaderIndex(header, BADGE_HEADERS), pinned.badgesCol),
-    folderCol: take(findHeaderIndex(header, FOLDER_HEADERS), pinned.folderCol),
+    badgesCol: take(findHeaderIndex(header, BADGE_HEADERS), canonical.badgesCol),
+    folderCol: take(findHeaderIndex(header, FOLDER_HEADERS), canonical.folderCol),
   };
 }
 
@@ -223,13 +227,14 @@ function matchingRowIndexes(layout: Layout, url: string): number[] {
   return found;
 }
 
+function layoutWidth(layout: Pick<Layout, "urlCol" | "badgesCol" | "folderCol">): number {
+  return Math.max(layout.urlCol, layout.badgesCol, layout.folderCol) + 1;
+}
+
 function headerRow(layout: Layout): string[] {
-  const width = Math.max(layout.urlCol, layout.companyCol, layout.roleCol, layout.badgesCol, layout.folderCol) + 1;
-  const row = Array.from({ length: width }, () => "");
-  row[layout.urlCol] = "URL";
-  row[layout.companyCol] = "Company";
-  row[layout.roleCol] = "Role";
+  const row = Array.from({ length: layoutWidth(layout) }, () => "");
   row[layout.badgesCol] = "Badges";
+  row[layout.urlCol] = "URL";
   row[layout.folderCol] = "Folder";
   return row;
 }
@@ -378,11 +383,8 @@ async function writeSheetJob(job: SheetJobRow, settings?: Settings): Promise<boo
   const matches = matchingRowIndexes(ready, job.url);
 
   if (matches.length === 0) {
-    const width = Math.max(ready.badgesCol, ready.folderCol, ready.urlCol, ready.companyCol, ready.roleCol) + 1;
-    const row = Array.from({ length: width }, () => "");
+    const row = Array.from({ length: layoutWidth(ready) }, () => "");
     row[ready.urlCol] = job.url;
-    if (job.company) row[ready.companyCol] = job.company;
-    if (job.role) row[ready.roleCol] = job.role;
     if (labels) row[ready.badgesCol] = labels;
     if (folder) row[ready.folderCol] = folder;
     await appendValues(
@@ -398,8 +400,6 @@ async function writeSheetJob(job: SheetJobRow, settings?: Settings): Promise<boo
   for (const index of matches) {
     const current = ready.rows[index] ?? [];
     const next = compactRow(current, ready, { badges: labels, folder });
-    if (job.company) next[ready.companyCol] = job.company;
-    if (job.role) next[ready.roleCol] = job.role;
     const width = Math.max(current.length, next.length);
     for (let col = 0; col < width; col += 1) {
       if ((current[col] ?? "") === (next[col] ?? "")) continue;

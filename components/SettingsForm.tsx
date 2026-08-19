@@ -218,10 +218,11 @@ export function SettingsForm({ initial }: { initial: RedactedSettings }) {
       <section className="panel p-5 md:col-span-2">
         <h2 className="text-base text-fg">Google Sheet</h2>
         <p className="mt-0.5 text-xs text-fg-muted">
-          When a Direct hire, Agency, Startup, Hybrid, or On-site badge appears on a job card, it is written
-          to the Badges column. After documents are written, the resume folder name goes in Folder. Missing
-          headers are added; scattered labels are pulled into those columns. Deleting a job here deletes that
-          URL&apos;s row. Share the spreadsheet with the service account as Editor.
+          Columns are Badges, URL, Folder. When a Direct hire, Agency, Startup, Hybrid, or On-site badge
+          appears on a job card, it is written to Badges. After documents are written, the resume folder
+          name goes in Folder. Missing headers are added; scattered labels are pulled into those columns.
+          Deleting a job here deletes that URL&apos;s row. Share the spreadsheet with the service account as
+          Editor.
         </p>
 
         <div className="mt-4 grid gap-3 md:grid-cols-2">

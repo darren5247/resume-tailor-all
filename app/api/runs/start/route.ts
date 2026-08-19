@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { parseUrlList } from "@/lib/scrape/url";
-import { RunSetupError, startRun } from "@/lib/pipeline/runner";
+import { RunSetupError, executeRun, startRun } from "@/lib/pipeline/runner";
+import { schedulePipeline } from "@/lib/pipeline/schedule";
 
 export const runtime = "nodejs";
 // Hobby Fluid max is 300s; higher values fail at "Deploying outputs…".
@@ -11,6 +12,7 @@ export async function POST(request: Request) {
     const body = (await request.json()) as { urls?: string };
     const { urls, invalid } = parseUrlList(body.urls ?? "");
     const run = await startRun(urls);
+    schedulePipeline(() => executeRun(run.id));
     return NextResponse.json({ run, invalid });
   } catch (error) {
     const status = error instanceof RunSetupError ? 400 : 500;
