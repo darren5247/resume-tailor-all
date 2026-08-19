@@ -6,6 +6,11 @@ const nextConfig: NextConfig = {
   outputFileTracingExcludes: {
     "*": ["./output/**", "./data/**"],
   },
+  // pdfkit opens AFM metrics via fs at runtime, so NFT never sees them unless listed.
+  outputFileTracingIncludes: {
+    "*": ["./node_modules/pdfkit/js/data/**"],
+    "/api/**": ["./node_modules/pdfkit/js/data/**"],
+  },
   // Runtime output/data dirs are intentionally unbounded; NFT still flags them.
   turbopack: {
     ignoreIssue: [
